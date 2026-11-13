@@ -1,0 +1,33 @@
+# PRIVATE - browser cookie exports contain login sessions (VK, YouTube...)
+cookies*.txt
+*cookies*.txt
+*.cookies
+
+# Downloaded videos and partial downloads
+*.mp4
+*.mkv
+*.webm
+*.mov
+*.m4a
+*.mp3
+*.opus
+*.part
+*.ytdl
+*.temp
+
+# Settings written at runtime (normally in the home folder, just in case)
+.video_downloader.json
+
+# ffmpeg copied next to the program
+bin/
+
+# Python / build
+.venv/
+venv/
+__pycache__/
+*.pyc
+dist/
+*.zip
+.claude/settings.local.json
+# Webinar-room recordings
+*.ts
