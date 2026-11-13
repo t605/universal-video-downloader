@@ -36,6 +36,14 @@ DisableDirPage=yes
 DefaultGroupName=Universal Video Downloader
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
+MinVersion=10.0
+SetupLogging=yes
+AppPublisherURL=https://github.com/t605/universal-video-downloader
+AppSupportURL=https://github.com/t605/universal-video-downloader/issues
+VersionInfoVersion={#AppVer}.0.0
+VersionInfoCompany=Michael Yeruhimovich
+VersionInfoDescription=Universal Video Downloader Setup
+VersionInfoProductName=Universal Video Downloader
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputBaseFilename=UniversalVideoDownloader-Setup
@@ -57,16 +65,21 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "{#ProjectDir}\README.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ProjectDir}\THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#ProjectDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#ProjectDir}\README_RU.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#ProjectDir}\installer\logo.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\Universal Video Downloader"; Filename: "{app}\VideoDownloader.exe"; AppUserModelID: "MY.VideoDownloader"
 Name: "{autoprograms}\Universal Video Downloader - Read me"; Filename: "{app}\README.txt"
+Name: "{autoprograms}\Universal Video Downloader - Read me (Russian)"; Filename: "{app}\README_RU.txt"
 Name: "{autodesktop}\Universal Video Downloader"; Filename: "{app}\VideoDownloader.exe"; AppUserModelID: "MY.VideoDownloader"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\VideoDownloader.exe"; Description: "{cm:LaunchProgram,Universal Video Downloader}"; Flags: nowait postinstall skipifsilent
 
 [InstallDelete]
+Type: filesandordirs; Name: "{app}\_internal"
 Type: filesandordirs; Name: "{localappdata}\VideoDownloader\engine"
 
 [UninstallDelete]

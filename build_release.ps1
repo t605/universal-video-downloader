@@ -6,7 +6,7 @@ param([string]$Dest = (Join-Path $PSScriptRoot "dist"))
 $ErrorActionPreference = "Stop"
 $src = $PSScriptRoot
 $zip = Join-Path $Dest "UniversalVideoDownloader.zip"
-$files = "VideoDownloader.bat", "VideoDownloader.py", "README.txt"
+$files = "VideoDownloader.bat", "VideoDownloader.py", "README.txt", "README_RU.txt", "LICENSE"
 
 # 1. checks (compile, offline tests of room / audio / login, version, ASCII; the rest is manual - see CLAUDE.md)
 foreach ($f in $files) {
@@ -38,17 +38,21 @@ if ($testCode -eq 0) {
     cmd /c "python -W ignore tests\test_engine.py 2>&1" | Out-Host
     $testCode = $LASTEXITCODE
 }
+if ($testCode -eq 0) {
+    cmd /c "python -W ignore tests\test_texts.py 2>&1" | Out-Host
+    $testCode = $LASTEXITCODE
+}
 if ($testCode -eq 0 -and (Test-Path "tests\test_shipped.py")) {   # private check (not in the public copy)
     cmd /c "python -W ignore tests\test_shipped.py 2>&1" | Out-Host
     $testCode = $LASTEXITCODE
 }
 Pop-Location
-if ($testCode -ne 0) { throw "tests\test_room.py, test_audio.py, test_login.py, test_scan.py or test_engine.py failed - release not built." }
+if ($testCode -ne 0) { throw "tests\test_room.py, test_audio.py, test_login.py, test_scan.py, test_engine.py or test_texts.py failed - release not built." }
 
 $py = Get-Content (Join-Path $src "VideoDownloader.py") -Raw -Encoding UTF8
 if ($py -notmatch 'APP_VER\s*=\s*"([^"]+)"') { throw "APP_VER not found in VideoDownloader.py" }
 $ver = $Matches[1]
-$head = Get-Content (Join-Path $src "README.txt") -TotalCount 3
+$head = Get-Content (Join-Path $src "README.txt") -TotalCount 5
 if (-not ($head -match "version $([regex]::Escape($ver))\b")) {
     throw "README.txt header does not say 'version $ver' - update it first."
 }

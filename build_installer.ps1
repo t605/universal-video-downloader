@@ -59,7 +59,7 @@ try {
     Push-Location $src
     try {
         if (-not (Get-Command python -ErrorAction SilentlyContinue)) { throw "Python was not found on PATH - installer not built." }
-        foreach ($t in (@("test_room.py", "test_audio.py", "test_login.py", "test_scan.py", "test_engine.py") + @(if (Test-Path "tests\test_shipped.py") { "test_shipped.py" }))) {
+        foreach ($t in (@("test_room.py", "test_audio.py", "test_login.py", "test_scan.py", "test_engine.py", "test_texts.py") + @(if (Test-Path "tests\test_shipped.py") { "test_shipped.py" }))) {
             cmd /c "python -W ignore tests\$t 2>&1" | Out-Host
             if ($LASTEXITCODE -ne 0) { throw "tests\$t failed - installer not built." }
         }
@@ -91,6 +91,7 @@ try {
     $bp += Test-AsciiCrlf (Join-Path $src "build_installer.ps1") "build_installer.ps1"
     if ($bp.Count -gt 0) { throw ("Byte check failed:`r`n  " + ($bp -join "`r`n  ")) }
     if (-not (Test-Path -LiteralPath (Join-Path $src "THIRD-PARTY-NOTICES.txt"))) { throw "THIRD-PARTY-NOTICES.txt is missing." }
+    foreach ($need in @("LICENSE", "README_RU.txt")) { if (-not (Test-Path -LiteralPath (Join-Path $src $need))) { throw "$need is missing." } }
     $ico = Join-Path $src "installer\logo.ico"
     if (-not (Test-Path -LiteralPath $ico)) { throw "installer\logo.ico is missing." }
 

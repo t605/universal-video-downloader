@@ -27,7 +27,7 @@ large high-contrast window, English and Russian.
    It installs for your user only, with no administrator rights, and puts an icon on the desktop.
 
 There is also a zip with a `.bat` launcher (it installs Python and the packages by itself on the first run).
-The full step-by-step manual, written for beginners, is `README.txt` in the Setup and in the zip.
+The full step-by-step manual, written for beginners, is `README.txt` (English) and `README_RU.txt` (Russian), in the Setup and in the zip.
 
 ## What it cannot do
 

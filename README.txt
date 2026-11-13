@@ -1,5 +1,5 @@
 ===============================================================
-  UNIVERSAL VIDEO DOWNLOADER                       version 9.20
+  UNIVERSAL VIDEO DOWNLOADER                       version 9.21
   Saves videos from the internet to your computer, in 480p
 ===============================================================
 
@@ -55,15 +55,19 @@ How it works, in three moves:
   3. The video appears in a folder on your computer.
 
 WHAT YOU NEED
-  * A Windows 10 or 11 computer.
-  * An internet connection.
-  * About 300 MB of free disk space for the program, plus room
-    for your videos.
-  * The Setup file  UniversalVideoDownloader-Setup.exe . You
-    got it from the person who made this program for you.
+  * A Windows 10 or Windows 11 computer, 64-bit. Windows 7 and
+    8 are not supported: the Setup will refuse to start.
 
 You do NOT need to install anything else. Everything the
 program needs is already inside the Setup file.
+
+HOW THE SETUP FILE REACHES YOU: Gmail does not accept .exe
+files, and it limits attachments to 25 MB. So the Setup file
+should come as a download link (a cloud drive, or the GitHub
+Releases page), not as an e-mail attachment. Your helper can
+check the file: the fingerprint (SHA-256) is published on the
+release page, and the helper can compare it with the
+fingerprint of the file you got.
 
 GOOD TO KNOW
   * It costs nothing.
@@ -72,6 +76,10 @@ GOOD TO KNOW
   * The program looks at what you copied only when you switch
     to its window, and only if it is a web address. It never
     downloads anything until you press the green button.
+  * Keyboard: the Tab key moves to the links at the bottom of
+    the window, and the Space key ticks or unticks a lesson in
+    a list. The smallest size of the window is larger now, so
+    that everything stays visible.
 
 
 ---------------------------------------------------------------
@@ -118,12 +126,18 @@ YOU WILL SEE: the Setup window opens.
 If the file came from somebody else, or you are not sure:
 close the box and ask the person who made the program.
 
+On some new Windows 11 computers, a feature called "Smart App
+Control" blocks a program that Windows does not know. Then the
+box has NO "Run anyway" button. In that case you cannot install
+the program yourself. Stop, and ask your helper or a technical
+person.
+
 Windows may also ask "Do you want to allow this app to make
 changes to your device?". The Setup needs no administrator
-rights, so you normally will not see this question. If you do
-see it, and the file came from the person who made the program
-for you, click "Yes". If you are unsure, stop and ask your
-helper.
+rights, so you should not see this question. If you do see it,
+press "No" and ask your helper. Do not press "Yes": the program
+could then be installed for another Windows user instead of
+you.
 
 STEP 4 - Go through the Setup window
 ------------------------------------
@@ -172,12 +186,16 @@ ask the person who made the program for you.
 
 HOW TO UNINSTALL
   1. Press the Windows key, type  Settings , press Enter.
-  2. Click "Apps", then "Installed apps".
-  3. Find "Universal Video Downloader". Click the three dots
-     next to it.
-  4. Click "Uninstall" and answer the questions.
+  2. Windows 11: click "Apps", then "Installed apps". Find
+     "Universal Video Downloader", click the three dots next to
+     it and click "Uninstall".
+  3. Windows 10: click "Apps", then "Apps & features". Click
+     "Universal Video Downloader", then click "Uninstall".
+  4. Confirm when Windows asks.
 This also deletes the logins the program saved (section 5) and
 the engine update. The videos you downloaded are NOT deleted.
+Login files you exported by hand into Downloads or onto the
+Desktop are NOT removed either.
 
 If you also used the zip version (see the appendix), it shares
 the same data folder, %LOCALAPPDATA%\VideoDownloader.
@@ -191,6 +209,11 @@ The program does it by itself. When you are online, it contacts
 github.com, at most twice a day, and fetches the newest engine
 from the official yt-dlp release. Nothing else about you is
 sent. The new engine is used the next time the program starts.
+
+The program itself does not update by itself, only the download
+engine does. For a bug fix you need a new Setup file.
+Installing it over the old one is safe, and it also restores
+the built-in engine.
 
 If a website stops working, see "A website stopped working" in
 section 7.
@@ -245,6 +268,10 @@ is your Downloads folder. "Open folder" opens it. "Change"
 lets you pick another folder. The program remembers your
 choice.
 
+If your Downloads folder is synchronised by OneDrive, big
+videos will also be uploaded to the cloud, and that can use up
+your cloud space.
+
 If you press a button before you copied an address, the
 program says: "First copy a video's address in your browser,
 then press "Paste link"." Do exactly that.
@@ -262,8 +289,11 @@ website that needs your login)
 
   STEP 1 - LOG IN (only the first time).
      Do the steps of OPTION A in section 5 ("Log in with a
-     password"). When the program says "Logged in to ...", you
-     are done. The login stays saved: next time skip this step.
+     password"). After a good login the program goes back to
+     the main page and says: "Logged in to ... For one video,
+     press the green "Download video" button. For a whole
+     course, open "Several videos on one page"." The login
+     stays saved: next time skip this step.
 
   STEP 2 - COPY THE ADDRESS OF THE COURSE PAGE.
      In your normal browser (Chrome, Edge), open the page of
@@ -282,13 +312,16 @@ website that needs your login)
 
   STEP 5 - FIND THE VIDEOS.
      Press the blue button "Find videos".
-     YOU WILL SEE: the button says "Looking..." Wait. The
-     program opens every lesson, one after the other. A course
-     of 13 lessons takes about 15 seconds. A course of 80
-     lessons takes more than a minute. Do not press anything.
+     YOU WILL SEE: the button says "Looking..." and a message
+     like "Reading lesson 7 of 13..." Wait. The program opens
+     every lesson, one after the other. A course of 13 lessons
+     takes about 15 seconds. A course of 80 lessons takes more
+     than a minute. Do not press anything.
      YOU WILL SEE AT THE END: a list, one line per video, every
-     line with a tick, and the message "Found 13 videos" (the
-     number is the number of videos in your course).
+     line with a tick, and the message "Found 13 videos. Untick
+     any you don't want, then press the green button. They will
+     be saved in: ..." with the name of the folder (the number
+     is the number of videos in your course).
      IF YOU SEE "No videos found": you are not logged in, or
      this is not the page that lists the lessons. Go back to
      step 1, or copy the address again (step 2).
@@ -316,8 +349,8 @@ website that needs your login)
      stay in the order of the course. If the course has parts
      (sub-courses), each part gets its own folder inside the
      course folder.
-     Then press "Open folder". It opens the Downloads folder:
-     open the course folder in it.
+     Then press "Open folder". After a course download it opens
+     the course folder itself, with your videos in it.
 
 If one video fails, the program goes on with the next ones and
 tells you at the end how many were saved.
@@ -461,10 +494,14 @@ STEP 8 - Press "Log in"
   about a minute.
 
 STEP 9 - Success
-  YOU WILL SEE: a message like "Logged in to <website>. Now
-  press the green "Download video" button."
-  WHAT: Press the big green "Download video" button on the
-  main screen. Now it works as in section 3.
+  YOU WILL SEE: the program goes back to the main page and
+  shows a message like "Logged in to <website>. For one video,
+  press the green "Download video" button. For a whole course,
+  open "Several videos on one page"."
+  WHAT: For one video, press the big green "Download video"
+  button (section 3). For a whole course, click the link
+  "Several videos on one page" at the bottom and follow section
+  4 from step 2.
   IF YOU SEE A RED MESSAGE: read the list "What the messages
   mean" below.
 
@@ -525,6 +562,13 @@ password is never sent over an unprotected connection."
      from the browser again (step 1). If the lesson's address
      in the browser does not start with https://, use option B.
 
+You see: "This web address looks wrong (it contains an @ sign
+or a space). Copy it again from the address bar of your
+browser."
+  -> Do this: copy the lesson's address again from the bar at
+     the top of your browser (section 3, step 2), and paste it
+     into the first box.
+
 You see: "This does not look like a GetCourse course website.
 Use the login file steps on the "Log in to websites" page
 instead (the steps with "Open add-on page")."
@@ -552,9 +596,9 @@ try again."
      in the browser). Wait a minute. Try again.
 
 You see: "Logged in to <website>, but the lesson page could not
-be opened to check it. Press the green "Download video" button
-to try."
-  -> Do this: press the green "Download video" button. If it
+be opened to check it. Try it: one video - the green "Download
+video" button; a whole course - "Several videos on one page"."
+  -> Do this: try one of the two ways the message names. If it
      fails, see the messages above.
 
 You see: "The login worked, but the login file could not be
@@ -568,8 +612,9 @@ again, ask your helper to open "Details for helper"."
      helper.
 
 You see: "This video is copy-protected (DRM), like films on
-Netflix. Your login is fine ..." (the message goes on: "Watch
-it on the website or in its app.")
+Netflix. Your login is fine - this program cannot save it and
+does not try to get around the protection. Watch it on the
+website or in its app."
   -> Do this: nothing is wrong with your login. This video is
      locked on purpose by the service. This program cannot save
      it and does not try to get around the protection. Watch it
@@ -702,10 +747,10 @@ broadcast while it runs and turn it into an MP4 file for you.
   4. Keep the window open. The "Start recording" button turns
      grey and the red "Stop and save" button becomes active.
      The window shows how much has been recorded
-     (hours:minutes: seconds). The program asks Windows not to
-     go to sleep while it works, but do not close the laptop
-     lid and plug in the charger. If the computer sleeps
-     anyway, the recording stops or has a gap.
+     (hours:minutes:seconds). The program asks Windows not to
+     go to sleep while it works. Even so, keep the computer
+     plugged in and do NOT close the laptop lid. If the
+     computer sleeps anyway, the recording stops or has a gap.
   5. When the webinar is over, the program stops by itself and
      makes the MP4. To finish earlier, press "Stop and save".
      Wait for "Done!". The MP4 is in your download folder.
@@ -740,6 +785,11 @@ broadcast while it runs and turn it into an MP4 file for you.
     needs about 4 GB for the raw ".ts" file and about 4 GB more
     for the ".mp4" while it is being made, so keep about 8 GB
     free on the disk.
+  * Before it records, the program checks the free space. If
+    less than 10 GB are free, it asks, for example: "Only 5.2
+    GB are free on the drive where videos are saved. A webinar
+    of two hours needs about 8 GB (the recording, and then the
+    MP4). Record anyway?" Free some space first if you can.
   * Only rooms whose video comes from the Rutube website are
     supported so far (you cannot tell from the link; just try,
     the program will say so). For another kind it shows a code:
@@ -1104,9 +1154,9 @@ Python by itself.
          [4 of 4]  Checking the helper module (FFmpeg)...
      If Python is missing it asks "Install Python now [Y,N]?".
      Press  Y  and Enter, and wait a few minutes. Do not close
-     the window. When all four checks pass, the Video
-     Downloader window opens. The first run takes a few
-     minutes; later runs take a few seconds.
+     the window. When all four checks pass, the program window
+     opens. The first run takes a few minutes; later runs take
+     a few seconds.
   3. If it says "Please RESTART THE COMPUTER, then double-click
      this launcher again.", restart the computer and
      double-click VideoDownloader.bat again. This happens at

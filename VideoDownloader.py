@@ -34,12 +34,12 @@
 
 import os, sys, re, ssl, glob, time, json, shutil, argparse, subprocess, threading
 import webbrowser, urllib.request, urllib.parse, urllib.error
-import base64, socket, struct, http.cookiejar
+import base64, socket, struct, http.cookiejar, atexit
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 
 APP_NAME = "Universal Video Downloader"
-APP_VER  = "9.20"
+APP_VER  = "9.21"
 
 # Under pythonw (no console) sys.stdout/stderr are None, and anything that
 # prints would crash. Send that output to a log file instead (fresh each start).
@@ -722,6 +722,25 @@ def native_listing_url(url: str) -> bool:
         r"|(rutube\.ru/(?:channel|plst)/)"
         r"|(ok\.ru/(?:group|profile|video/c))", u))
 
+_TEMP_COOKIES = []
+
+def _cleanup_temp_cookies():
+    """The temporary VK cookie copies hold login cookies: they must not stay in the temp folder."""
+    for f in _TEMP_COOKIES:
+        try: os.remove(f)
+        except OSError: pass
+atexit.register(_cleanup_temp_cookies)
+
+def _purge_old_temp_cookies(max_age=3600):
+    try:
+        import tempfile
+        for f in glob.glob(os.path.join(tempfile.gettempdir(), "vdl_vk_*.txt")):
+            if time.time() - os.path.getmtime(f) > max_age:
+                os.remove(f)
+    except Exception:
+        pass
+_purge_old_temp_cookies()
+
 def widen_vk_cookies(path: str) -> str:
     """
     Return a temp cookies.txt where VK auth cookies exist on every VK domain.
@@ -774,6 +793,7 @@ def widen_vk_cookies(path: str) -> str:
     try:
         import tempfile
         fd, out = tempfile.mkstemp(prefix="vdl_vk_", suffix=".txt")
+        _TEMP_COOKIES.append(out)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write("# Netscape HTTP Cookie File\n")
             for p in rows + extra:
@@ -1480,9 +1500,7 @@ T = {
     d_not_video="This address is not a video page, or this website is not supported.",
     d_no_player="No video was found on this page. If it is a private lesson, log in first "
                 "(press the button “Log in” below); otherwise this website may not be supported.",
-    d_drm="This video is copy-protected (DRM), like films on Netflix. Your login is fine - "
-          "this program cannot save it and does not try to get around the protection. "
-          "Watch it on the website or in its app.",
+    d_drm="This video is copy-protected (DRM), like films on Netflix. Your login is fine — this program cannot save it and does not try to get around the protection. Watch it on the website or in its app.",
     d_network="No internet connection, or the website is not answering. "
               "Try again in a minute.",
     d_other="Something went wrong. Your helper can see the details under "
@@ -1502,7 +1520,9 @@ T = {
               "“Log in to websites” and try again.",
     scan_front="This is the website's front page. Open the lesson or channel you want "
                "and copy that address.",
-    scan_found="Found {n} videos. Untick any you don't want, then press the green button.",
+    scan_found="Found {n} videos. Untick any you don't want, then press the green button. They will be saved in: {folder}.",
+    scan_reading="Reading lesson {i} of {n}...",
+    room_low_disk="Only {gb} GB are free on the drive where videos are saved. A webinar of two hours needs about 8 GB (the recording, and then the MP4). Record anyway?",
     no_page="First copy the page's address, then press “Paste link”.",
     nothing_ticked="Tick at least one video first (click on its line).",
     ck_title="Log in to websites",
@@ -1521,21 +1541,15 @@ T = {
     ck_bad_file="That file is not a login (cookies.txt) file.",
     ck_pick="Choose the cookies.txt file",
     login_btn="Log in with a password",
-    login_help="Only for course websites built on GetCourse (the web address has /teach/ in it). "
-               "Type the e-mail or username and the password you use on that website. They are "
-               "sent only to that website. The program does not save the password, but it keeps "
-               "a login file on this computer (remove it with “Log out (delete saved logins)”). "
-               "It does not work if the website asks for a CAPTCHA or a code from a text message "
-               "- then use the login file steps on the “Log in to websites” page.",
+    login_help="Only for course websites built on GetCourse, a platform many online schools use (the web address has /teach/ in it). Type the e-mail or username and the password you use on that website. They are sent only to that website. The program does not save the password, but it keeps a login file on this computer (remove it with “Log out (delete saved logins)”). It does not work if the website asks for a CAPTCHA (“I am not a robot”) or a code from a text message — then use the login file steps on the “Log in to websites” page.",
     login_title="Log in to a course website",
     login_site="Web address of the lesson page (starts with https://). "
                "It is filled in from the link box - check that it is right:",
     login_email="E-mail or username:", login_pass="Password:",
     login_show="Show the password", login_go="Log in", login_cancel="Cancel",
     login_busy="Logging in - this can take up to about a minute. Please wait...",
-    login_ok="Logged in to {host}. Now press the green “Download video” button.",
-    login_ok_unchecked="Logged in to {host}, but the lesson page could not be opened to check "
-                       "it. Press the green “Download video” button to try.",
+    login_ok="Logged in to {host}. For one video, press the green “Download video” button. For a whole course, open “Several videos on one page”.",
+    login_ok_unchecked="Logged in to {host}, but the lesson page could not be opened to check it. Try it: one video - the green “Download video” button; a whole course - “Several videos on one page”.",
     login_err_empty="Fill in the web address (it starts with https://), the e-mail or username, "
                     "and the password.",
     login_err_https="The web address must start with https:// - the password is never sent "
@@ -1574,7 +1588,7 @@ T = {
     sys_ok="working", sys_missing="missing", sys_none="none",
 ),
 "ru": dict(
-    app_title="Универсальный загрузчик видео", ready="Готово к работе", attention="Нужна помощь",
+    app_title="Универсальный загрузчик видео", ready="Готово", attention="Нужна помощь",
     lang_switch="English",
     step1="1.  Скопируйте адрес видео в браузере и нажмите",
     paste="Вставить ссылку", clear="Очистить",
@@ -1687,9 +1701,7 @@ T = {
     d_not_video="По этому адресу нет видео, или этот сайт не поддерживается.",
     d_no_player="На этой странице не найдено видео. Если это закрытый урок, сначала войдите "
                 "(нажмите кнопку «Войти» ниже); иначе этот сайт может не поддерживаться.",
-    d_drm="Это видео защищено от копирования (DRM), как фильмы на Netflix. Ваш вход в порядке - "
-          "эта программа не может его сохранить и не пытается обойти защиту. "
-          "Смотрите его на сайте или в приложении сайта.",
+    d_drm="Это видео защищено от копирования (DRM), как фильмы на Netflix. С вашим входом всё в порядке — эта программа не может его сохранить и не пытается обойти защиту. Смотрите его на сайте или в приложении сайта.",
     d_network="Нет интернета, или сайт не отвечает. Попробуйте через минуту.",
     d_other="Что-то пошло не так. Помощник увидит подробности в разделе "
             "«Для помощника».",
@@ -1708,7 +1720,9 @@ T = {
               "«Вход на сайты» и попробуйте снова.",
     scan_front="Это главная страница сайта. Откройте нужный урок или канал и "
                "скопируйте его адрес.",
-    scan_found="Найдено видео: {n}. Снимите отметку с ненужных и нажмите зелёную кнопку.",
+    scan_found="Найдено видео: {n}. Снимите отметку с ненужных и нажмите зелёную кнопку. Они будут сохранены в папку: {folder}.",
+    scan_reading="Читаю урок {i} из {n}...",
+    room_low_disk="На диске, куда сохраняются видео, свободно только {gb} ГБ. Для вебинара на два часа нужно около 8 ГБ (запись, а потом MP4). Всё равно записывать?",
     no_page="Сначала скопируйте адрес страницы и нажмите «Вставить ссылку».",
     nothing_ticked="Сначала отметьте хотя бы одно видео (щёлкните по строке).",
     ck_title="Вход на сайты",
@@ -1727,30 +1741,20 @@ T = {
     ck_bad_file="Этот файл — не файл входа (cookies.txt).",
     ck_pick="Выберите файл cookies.txt",
     login_btn="Войти по паролю",
-    login_help="Только для сайтов с курсами на платформе GetCourse (в веб-адресе есть /teach/). "
-               "Введите e-mail или имя пользователя и пароль, которые вы используете на этом "
-               "сайте. Они отправляются только на этот сайт. Пароль программа не сохраняет, но "
-               "хранит на этом компьютере файл входа (удалить его можно кнопкой «Выйти (удалить сохранённые входы)»). "
-               "Не работает, если сайт просит проверку CAPTCHA или код из СМС - тогда "
-               "используйте шаги с файлом входа на странице «Вход на сайты».",
+    login_help="Только для сайтов с курсами на платформе GetCourse, которой пользуются многие онлайн-школы (в адресе есть /teach/). Введите электронную почту или логин и пароль, которые вы используете на этом сайте. Они отправляются только на этот сайт. Пароль программа не сохраняет, но хранит на этом компьютере файл входа (удалить его можно кнопкой «Выйти (удалить сохранённые входы)»). Не работает, если сайт просит проверку «Я не робот» (CAPTCHA) или код из сообщения на телефон — тогда используйте шаги с файлом входа на странице «Вход на сайты».",
     login_title="Вход на сайт с курсом",
-    login_site="Веб-адрес страницы урока (начинается с https://). "
-               "Он подставлен из окна ссылки - проверьте, что он верный:",
-    login_email="E-mail или имя пользователя:", login_pass="Пароль:",
+    login_site="Адрес страницы урока (начинается с https://). Он взят из поля со ссылкой — проверьте, что он верный:",
+    login_email="Электронная почта или логин:", login_pass="Пароль:",
     login_show="Показать пароль", login_go="Войти", login_cancel="Отмена",
     login_busy="Выполняется вход - это может занять до минуты. Подождите...",
-    login_ok="Вход на {host} выполнен. Теперь нажмите зелёную кнопку «Скачать видео».",
-    login_ok_unchecked="Вход на {host} выполнен, но страницу урока не удалось открыть для "
-                       "проверки. Нажмите зелёную кнопку «Скачать видео», чтобы попробовать.",
-    login_err_empty="Заполните веб-адрес (он начинается с https://), e-mail или имя "
-                    "пользователя и пароль.",
-    login_err_https="Веб-адрес должен начинаться с https:// - пароль никогда не отправляется "
-                    "по незащищённому соединению.",
-    login_err_address="Этот веб-адрес выглядит неправильно (в нём есть знак @ или пробел). Скопируйте его заново "
-                       "из адресной строки браузера.",
+    login_ok="Вход на {host} выполнен. Для одного видео нажмите зелёную кнопку «Скачать видео». Для всего курса откройте «Несколько видео на странице».",
+    login_ok_unchecked="Вход на {host} выполнен, но страницу урока не удалось открыть для проверки. Попробуйте: одно видео — зелёная кнопка «Скачать видео»; весь курс — «Несколько видео на странице».",
+    login_err_empty="Заполните адрес (он начинается с https://), электронную почту или логин и пароль.",
+    login_err_https="Адрес должен начинаться с https:// — пароль никогда не отправляется по незащищённому соединению.",
+    login_err_address="Этот адрес выглядит неправильно (в нём есть знак @ или пробел). Скопируйте его заново из адресной строки браузера.",
     login_err_site="Это не похоже на сайт GetCourse. Используйте шаги с файлом входа на "
                    "странице «Вход на сайты» (шаги с «Открыть дополнение»).",
-    login_err_bad="Сайт не принял e-mail (имя пользователя) или пароль.",
+    login_err_bad="Сайт не принял электронную почту (логин) или пароль.",
     login_err_captcha="Сайт просит проверку (CAPTCHA), которую программа не может пройти. "
                        "Используйте шаги с файлом входа на странице «Вход на сайты» "
                        "(шаги с «Открыть дополнение»).",
@@ -1814,11 +1818,13 @@ class CheckListbox(tk.Frame):
                          highlightbackground=C["border"], **kw)
         self._items = items
         self._lb = tk.Listbox(self, font=(UI, 13), bg=C["panel"], fg=C["text"],
-                              selectmode=tk.BROWSE, selectbackground=C["panel"],
+                              selectmode=tk.BROWSE, selectbackground=C["soft_blue"],
                               selectforeground=C["text"], activestyle="none",
                               relief=tk.FLAT, bd=0, height=4)
         self._lb.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=8, pady=6)
         self._lb.bind("<Button-1>", self._toggle)
+        for k in ("<space>", "<Return>"):                    # Up / Down move, Space / Enter ticks
+            self._lb.bind(k, self._toggle_key)
         sb = ttk.Scrollbar(self, command=self._lb.yview)
         sb.pack(side=tk.RIGHT, fill=tk.Y, pady=4)
         self._lb["yscrollcommand"] = sb.set
@@ -1836,6 +1842,14 @@ class CheckListbox(tk.Frame):
         i = self._lb.nearest(e.y)
         if 0 <= i < len(self._items):
             self._items[i]["checked"] ^= True; self._redraw(i)
+
+    def _toggle_key(self, e=None):
+        sel = self._lb.curselection()
+        i = sel[0] if sel else 0
+        if 0 <= i < len(self._items):
+            self._items[i]["checked"] ^= True; self._redraw(i)
+            self._lb.selection_clear(0, tk.END); self._lb.selection_set(i); self._lb.activate(i)
+        return "break"
 
     def add(self, url, site, title, checked=True, **extra):
         self._items.append(dict(url=url, site=site, title=title, checked=checked, **extra))
@@ -1873,7 +1887,7 @@ class App(tk.Tk):
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
         w, h = min(int(980 * s), sw - 40), min(int(760 * s), sh - 90)
         self.geometry(f"{w}x{h}+{max(0, (sw - w) // 2)}+{max(0, (sh - h) // 3)}")
-        self.minsize(min(int(760 * s), sw - 40), min(int(680 * s), sh - 90))
+        self.minsize(min(int(820 * s), sw - 40), min(int(730 * s), sh - 90))
         self.configure(bg=C["bg"])
 
         # Window / taskbar icon
@@ -1894,6 +1908,7 @@ class App(tk.Tk):
         self._engine_ver = ""
         self._lookup_cache = {}             # short-lived page / player lookups (_cached)
         self._last_conv = ""                # last file made by "Convert to MP4"
+        self._open_dir = ""                 # the course folder of the last list download ("Open folder")
         self._page = "main"
         self._batch = None                  # (i, n) while downloading ticked videos
         self._last_clip = ""                # last link taken from the clipboard
@@ -1939,7 +1954,12 @@ class App(tk.Tk):
 
     def t(self, key, **kw):
         s = T[self._lang].get(key) or T["en"][key]
-        return s.format(**kw) if kw else s
+        s = s.format(**kw) if kw else s
+        if self._lang == "en":
+            s = re.sub(r"\b1 (video|website|link)s\b", r"1 \1", s)          # "1 videos" -> "1 video"
+        elif self._lang == "ru":
+            s = re.sub(r"«[^»]*»", lambda m: m.group(0).replace(" ", "\u00a0"), s)   # «Вход на сайты» stays on one line
+        return s
 
     # ══════════════════════════════════════════════════════════
     #  LAYOUT
@@ -2010,18 +2030,24 @@ class App(tk.Tk):
                               fg=C["pill_ok"], cursor="hand2")
         self._pill.pack(side=tk.RIGHT, padx=10)
         self._pill.bind("<Button-1>", lambda _: self._show("details"))
+        self._pill.config(takefocus=1, highlightthickness=2, highlightbackground=C["header"], highlightcolor="#FFFFFF")
+        for k in ("<Return>", "<space>"):
+            self._pill.bind(k, lambda _: self._show("details"))
         return h
 
     def _footer(self):
         f = tk.Frame(self, bg=C["panel2"])
         tk.Label(f, text=self.t("more"), font=(UI, 12), fg=C["muted"], bg=C["panel2"]
-                 ).pack(side=tk.LEFT, padx=(24, 4), pady=10)
+                 ).pack(side=tk.LEFT, padx=(16, 2), pady=10)
         for key, page in (("nav_scan", "scan"), ("nav_room", "room"),
                           ("nav_cookies", "cookies"), ("nav_details", "details")):
             l = tk.Label(f, text=self.t(key), font=(UI, 12, "underline"), fg=C["blue"],
-                         bg=C["panel2"], cursor="hand2")
-            l.pack(side=tk.LEFT, padx=10)
+                         bg=C["panel2"], cursor="hand2", takefocus=1, highlightthickness=2,
+                         highlightbackground=C["panel2"], highlightcolor=C["blue"])
+            l.pack(side=tk.LEFT, padx=5)
             l.bind("<Button-1>", lambda _, pg=page: self._show(pg))
+            for k in ("<Return>", "<space>"):               # Tab reaches the link, Enter / Space opens it
+                l.bind(k, lambda _, pg=page: self._show(pg))
         return f
 
     def _show(self, name):
@@ -2214,7 +2240,7 @@ class App(tk.Tk):
         for i, (desc, btxt, cmd, col) in enumerate([
                 ("ck_step1", "ck_btn1", self._open_extension, C["blue"]),
                 ("ck_step2", "ck_btn2", self._open_sites, C["blue"]),
-                ("ck_step3", "ck_btn3", self._rescan_cookies, C["green"])]):
+                ("ck_step3", "ck_btn3", self._rescan_cookies, C["blue"])]):
             self._label(wiz, f"{i + 1}.", 15, True, bg=C["panel"]
                         ).grid(row=i, column=0, sticky="w", pady=3)
             self._label(wiz, self.t(desc), 13, bg=C["panel"], wrap=True
@@ -2300,6 +2326,7 @@ class App(tk.Tk):
                      highlightbackground=C["border"])
         w.grid_columnconfigure(0, weight=1)
         self._st_main = self._label(w, "", 16, True, bg=C["panel"], wrap=True)
+        self._st_main.config(height=2, anchor=tk.NW)      # always two lines high: the panel does not jump
         self._st_main.grid(row=0, column=0, sticky="ew")
         self._st_sub = self._label(w, "", 13, fg=C["muted"], bg=C["panel"])
         self._st_sub.grid(row=1, column=0, sticky="ew", pady=(2, 0))
@@ -2313,7 +2340,7 @@ class App(tk.Tk):
         return w
 
     def _actions(self):
-        return {"folder":  (self.t("open_folder"), lambda: self._open_folder(self._dl_dir)),
+        return {"folder":  (self.t("open_folder"), lambda: self._open_folder(self._open_dir or self._dl_dir)),
                 "cookies": (self.t("nav_cookies"), lambda: self._show("cookies")),
                 "login":   (self.t("act_login"), self._open_login),
                 "update":  (self.t("act_update"), self._force_update),
@@ -2574,6 +2601,7 @@ class App(tk.Tk):
                 self._cookies_file = path       # the login just made is the one in use
                 self._lookup_cache.clear()      # a page read before the login showed no players
                 self._rescan_cookies()
+                self._show("main")
                 self._log(f"Logged in to {host}" + ("" if checked else " (lesson page not checked)"),
                           "ok" if checked else "warn")
                 self._set_status("ok" if checked else "warn",
@@ -2979,6 +3007,14 @@ class App(tk.Tk):
             self._set_status("warn", e.key); return
         if not self._ffmpeg:                       # needed for the MP4 at the end
             self._set_status("warn", "d_ffmpeg", action="ffmpeg"); return
+        try:
+            free = shutil.disk_usage(self._dl_dir).free
+        except OSError:
+            free = None
+        if free is not None and free < 10 * 1024 ** 3:      # a 2-hour webinar needs about 8 GB (recording + MP4)
+            if not messagebox.askyesno(self.t("nav_room"), self.t("room_low_disk", gb=f"{free / 1024 ** 3:.1f}"),
+                                       parent=self):
+                return
         self._running = True; self._room_active = True
         self._room_stop = threading.Event()
         self._set_busy(True, "recording")
@@ -3374,6 +3410,7 @@ class App(tk.Tk):
         return first
 
     def _dl_worker(self, url):
+        self._open_dir = ""
         def make_base(ref):
             b = self._base_opts(referer=ref, audio=self._audio_run)
             b["progress_hooks"] = [self._hook]
@@ -3431,7 +3468,7 @@ class App(tk.Tk):
         ok = key in ("scan_found", "list_loaded")
         self._scan_lbl.config(text=self.t(key, **kw) if key else "",
                               fg=C["green_text"] if ok else
-                                 C["muted"] if key == "looking" else C["orange"])
+                                 C["muted"] if key in ("looking", "scan_reading") else C["orange"])
 
     def _set_scan_info(self, key, **kw):
         self._scan_state = (key, kw); self._render_scan_info()
@@ -3628,6 +3665,7 @@ class App(tk.Tk):
                 if done >= total:
                     return
                 done += 1
+                self.after(0, lambda d=done, n=total: self._set_scan_info("scan_reading", i=d, n=n))
                 try:
                     players = find_players(get(lu))
                 except Exception as e:
@@ -3649,7 +3687,7 @@ class App(tk.Tk):
             self._set_scan_info(reason or "scan_none")
             self._log("✘  Nothing found", "warn")
         else:
-            self._set_scan_info("scan_found", n=len(found))
+            self._set_scan_info("scan_found", n=len(found), folder=self._dir_name())
             self._log(f"✔  {len(found)} video(s) found", "ok")
             for v in found:
                 self._scan_list.add(v["url"], v["site"], v["title"],
@@ -3690,6 +3728,7 @@ class App(tk.Tk):
 
     def _sel_worker(self, sel, out_dir, referer):
         ok = fail = 0; reasons = []
+        self._open_dir = ""
         referer = referer_for(referer)          # no query string / tracking ids
         for n, it in enumerate(sel, 1):
             def start(t=it["title"], i=n, N=len(sel)):
@@ -3703,6 +3742,8 @@ class App(tk.Tk):
                 item_dir = os.path.join(out_dir, it["folder"])
                 try: os.makedirs(item_dir, exist_ok=True)
                 except OSError: item_dir = out_dir
+                if item_dir != out_dir and not self._open_dir:      # the course folder (not a part's sub-folder)
+                    self._open_dir = os.path.join(out_dir, it["folder"].split(os.sep)[0])
             base = self._base_opts(item_dir, ref or None)
             base["progress_hooks"] = [self._hook]
             if it.get("named"):         # title from a link list: keep the course order
@@ -3839,7 +3880,13 @@ class App(tk.Tk):
     def _bg_update(self):
         def run():
             if FROZEN:      # refresh at most twice a day (the file is about 3 MB)
-                fresh = os.path.isfile(ENGINE_ZIP) and time.time() - os.path.getmtime(ENGINE_ZIP) < 12 * 3600
+                tried = ENGINE_ZIP + ".tried"
+                fresh = os.path.isfile(tried) and time.time() - os.path.getmtime(tried) < 12 * 3600
+                if not fresh:
+                    try:
+                        os.makedirs(ENGINE_DIR, exist_ok=True); open(tried, "w").close()
+                    except OSError:
+                        pass
                 updated = (not fresh) and _update_engine_zip()
             else:
                 updated = _pip("-U", "yt-dlp[default]") or _pip("-U", "yt-dlp")
