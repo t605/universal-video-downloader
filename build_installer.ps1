@@ -59,7 +59,7 @@ try {
     Push-Location $src
     try {
         if (-not (Get-Command python -ErrorAction SilentlyContinue)) { throw "Python was not found on PATH - installer not built." }
-        foreach ($t in (@("test_room.py", "test_audio.py", "test_login.py", "test_scan.py", "test_engine.py", "test_texts.py") + @(if (Test-Path "tests\test_shipped.py") { "test_shipped.py" }))) {
+        foreach ($t in (@("test_room.py", "test_audio.py", "test_login.py", "test_scan.py", "test_engine.py", "test_texts.py", "test_webinar.py") + @(if (Test-Path "tests\test_shipped.py") { "test_shipped.py" }))) {
             cmd /c "python -W ignore tests\$t 2>&1" | Out-Host
             if ($LASTEXITCODE -ne 0) { throw "tests\$t failed - installer not built." }
         }

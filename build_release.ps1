@@ -42,12 +42,16 @@ if ($testCode -eq 0) {
     cmd /c "python -W ignore tests\test_texts.py 2>&1" | Out-Host
     $testCode = $LASTEXITCODE
 }
+if ($testCode -eq 0) {
+    cmd /c "python -W ignore tests\test_webinar.py 2>&1" | Out-Host
+    $testCode = $LASTEXITCODE
+}
 if ($testCode -eq 0 -and (Test-Path "tests\test_shipped.py")) {   # private check (not in the public copy)
     cmd /c "python -W ignore tests\test_shipped.py 2>&1" | Out-Host
     $testCode = $LASTEXITCODE
 }
 Pop-Location
-if ($testCode -ne 0) { throw "tests\test_room.py, test_audio.py, test_login.py, test_scan.py, test_engine.py or test_texts.py failed - release not built." }
+if ($testCode -ne 0) { throw "tests\test_room.py, test_audio.py, test_login.py, test_scan.py, test_engine.py, test_texts.py or test_webinar.py failed - release not built." }
 
 $py = Get-Content (Join-Path $src "VideoDownloader.py") -Raw -Encoding UTF8
 if ($py -notmatch 'APP_VER\s*=\s*"([^"]+)"') { throw "APP_VER not found in VideoDownloader.py" }

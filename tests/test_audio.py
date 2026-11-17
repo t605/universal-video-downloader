@@ -65,6 +65,43 @@ class AudioTexts(unittest.TestCase):
             self.assertIn("{btn}", vd.T[lang]["st_link_ok"])
 
 
+class FormatChain(unittest.TestCase):
+    """The 480p chain must never end in "Requested format is not available" (a Kinescope stream with only
+    484p and a separate sound stream did exactly that, 17 Nov 2026)."""
+
+    def pick(self, formats):
+        ydl = vd.yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True})
+        sel = ydl.build_format_selector(vd.FORMAT_MERGE)
+        chosen = list(sel({"formats": formats, "incomplete_formats": False}))
+        self.assertTrue(chosen, "no format selected")
+        c = chosen[0]
+        return [f["format_id"] for f in (c.get("requested_formats") or [c])]
+
+    @staticmethod
+    def video(fid, h):
+        return dict(format_id=fid, ext="mp4", url="u" + fid, height=h, width=h * 16 // 9, vcodec="avc1.64001f",
+                    acodec="none", tbr=h * 1.4, protocol="m3u8_native")
+
+    @staticmethod
+    def audio(fid="a"):
+        return dict(format_id=fid, ext="m4a", url="u" + fid, height=None, vcodec="none", acodec="mp4a.40.2",
+                    tbr=64, protocol="m3u8_native")
+
+    def test_only_484p_with_separate_sound(self):
+        self.assertEqual(self.pick([self.audio(), self.video("v484", 484)]), ["v484", "a"])
+
+    def test_480p_is_still_preferred_over_larger(self):
+        self.assertEqual(self.pick([self.audio(), self.video("v480", 480), self.video("v720", 720),
+                                    self.video("v1080", 1080)]), ["v480", "a"])
+
+    def test_nothing_at_or_below_480p_takes_the_smallest_larger(self):
+        self.assertEqual(self.pick([self.audio(), self.video("v720", 720), self.video("v1080", 1080)]), ["v720", "a"])
+
+    def test_picture_with_sound_in_one_stream(self):
+        muxed = dict(self.video("m360", 360), acodec="mp4a.40.2")
+        self.assertEqual(self.pick([muxed]), ["m360"])
+
+
 class DrmMessage(unittest.TestCase):
     def test_drm_error_gets_its_own_plain_message(self):
         for err in ("ERROR: This format is DRM protected; Try selecting another format",

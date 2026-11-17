@@ -1,5 +1,5 @@
 ===============================================================
-  UNIVERSAL VIDEO DOWNLOADER                       version 9.21
+  UNIVERSAL VIDEO DOWNLOADER                       version 9.23
   Saves videos from the internet to your computer, in 480p
 ===============================================================
 
@@ -794,6 +794,28 @@ broadcast while it runs and turn it into an MP4 file for you.
     supported so far (you cannot tell from the link; just try,
     the program will say so). For another kind it shows a code:
     tell the person who helps you and give them that code.
+
+SCHOOL WEBINAR PAGES  (/pl/webinar/show)
+----------------------------------------
+Some schools show the webinar on their own page, not in a
+"room". The web address contains /pl/webinar/show , for
+example school.example.ru/pl/webinar/show?id=123 . The same
+button "Record a webinar room" works for it.
+
+  1. Log in to the school first (section 5).
+  2. At the bottom, click "Record a webinar room". Paste the
+     link and press "Start recording".
+  3. The program waits until the broadcast starts. Keep the
+     window open and the computer plugged in.
+  4. When the webinar is over, you get an MP4 file. Its name
+     is "webinar" and the number from the link.
+
+NOT TESTED YET on a real live broadcast: this kind of page was
+only checked on a webinar that had already ended (it cannot be
+recorded after the end: the program then keeps waiting, press
+the red Stop button). If the school put the recording of a
+finished webinar into a lesson, paste that lesson's link on the
+main screen: that is a normal video.
 
 COURSE PAGES WITH SEVERAL VIDEOS
 --------------------------------

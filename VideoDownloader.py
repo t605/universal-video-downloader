@@ -39,7 +39,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 
 APP_NAME = "Universal Video Downloader"
-APP_VER  = "9.21"
+APP_VER  = "9.23"
 
 # Under pythonw (no console) sys.stdout/stderr are None, and anything that
 # prints would crash. Send that output to a log file instead (fresh each start).
@@ -198,7 +198,10 @@ UI = "Segoe UI" if sys.platform == "win32" else "Helvetica"
 
 FORMAT_MERGE  = ("bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/"
                  "bestvideo[height<=480]+bestaudio/"
-                 "best[height<=480][ext=mp4]/best[height<=480]/best")
+                 "best[height<=480][ext=mp4]/best[height<=480]/"
+                 # nothing at or below 480p (a Kinescope stream with only 484p, video and sound separate):
+                 # take the SMALLEST picture above 480p, then anything at all
+                 "worstvideo[height>480]+bestaudio/worst[height>480]/best/bv*+ba/b")
 FORMAT_SINGLE = "best[height<=480][ext=mp4]/best[height<=480]/best[ext=mp4]/best"
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -520,6 +523,9 @@ def find_players(html: str) -> list:
     for v in re.findall(r'(https?://[^"\'\s<>]+/sign-player/?\?[^"\'\s<>]*json=[^"\'\s<>]+)', html):
         v = _h.unescape(v)
         out.append((re.sub(r"^https?://[^/]+", "https://player02.getcourse.ru", v), "getcourse"))
+    gs = gc_stream_in_page(html)
+    if gs:
+        out.append((gs, "gcstream"))
     uniq = []
     for u, k in out:
         if u not in seen:
@@ -1016,6 +1022,65 @@ def room_split_link(link: str):
     return room, dict(urllib.parse.parse_qsl(p.query, keep_blank_values=True))
 
 
+GC_STREAM_RE = re.compile(r"https?://[A-Za-z0-9.-]*getcourse\.ru/playlist/[0-9a-f]{32}/master\.m3u8[^\"'\s<>\\]*")
+
+
+def is_gc_webinar_link(link: str) -> bool:
+    """A webinar page of a GetCourse school: /pl/webinar/show?id=... (the school's own broadcast,
+    not a Bizon365 "/room/" link)."""
+    p = urllib.parse.urlparse((link or "").strip())
+    return p.scheme in ("http", "https") and bool(re.search(r"/pl/webinar/(?:show|view)", p.path))
+
+
+def gc_stream_in_page(html: str) -> str:
+    """The playlist address a GetCourse webinar page holds in its player settings ('' if none).
+    Templates such as .../playlist/{hash}/... are skipped (the real address has 32 hex characters)."""
+    import html as _h
+    dec = _h.unescape(html).replace("\\/", "/").replace("\\u0026", "&")
+    m = GC_STREAM_RE.search(dec)
+    return m.group(0) if m else ""
+
+
+def gc_webinar_stream(link: str, cookie_header: str = "", ctx=None):
+    """(playlist address, name) read from a GetCourse webinar page. The page needs the school's login.
+    RoomError('room_err_gc_page') if the page cannot be read, ('room_err_gc_nostream') if it holds no stream."""
+    hdrs = {"User-Agent": UA, "Accept-Language": "ru,en;q=0.8"}
+    if cookie_header:
+        hdrs["Cookie"] = cookie_header
+    try:
+        with open_url(urllib.request.Request(link, headers=hdrs), 30, ctx) as r:
+            page = r.read().decode("utf-8", errors="ignore")
+    except Exception:
+        raise RoomError("room_err_gc_page")
+    url = gc_stream_in_page(page)
+    if not url:
+        raise RoomError("room_err_gc_nostream")
+    wid = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(link).query)).get("id", "")
+    return url, ("webinar " + wid).strip()
+
+
+def gc_fetch(url: str, origin: str) -> bytes:
+    """One request for the school's stream server (it wants the school as Referer). OSError unless HTTP 200."""
+    st, body = _http(url, headers={"Referer": origin + "/", "Origin": origin}, timeout=30)
+    if st != 200:
+        raise OSError(f"HTTP {st}")
+    return body
+
+
+def gc_wait_for_playlist(url: str, origin: str, stop, poll: float = 10.0, fetch=None) -> bool:
+    """Wait until the playlist answers with a real playlist (the broadcast is on air).
+    True when it does, False if `stop` was set first. The server answers an error while nothing is on air."""
+    get = fetch or (lambda u: gc_fetch(u, origin))
+    while not stop.is_set():
+        try:
+            if b"#EXTM3U" in get(url)[:400]:
+                return True
+        except Exception:
+            pass
+        stop.wait(poll)
+    return False
+
+
 def room_signin(link: str):
     """Sign in the way the room page does (POST authorize, then loadInitData).
     Returns (room address, connection values from the room). The viewer's name,
@@ -1450,8 +1515,9 @@ T = {
     room_close_title="Recording in progress",
     room_close_ask="A recording is running. If you close the program now, the recording "
                    "stops and no MP4 is made. Close anyway?",
-    room_err_link="This link does not look like a webinar room. The address must contain "
-                  "/room/. Copy the link you received for the webinar.",
+    room_err_link="This link does not look like a webinar. The address must contain /room/ (a webinar room) or /pl/webinar/show (a school's own webinar page). Copy the address of the page where the webinar is shown.",
+    room_err_gc_page="The webinar page could not be opened. Log in to the school first (“Log in to websites”), then try again.",
+    room_err_gc_nostream="This webinar page holds no broadcast address. Check that you are logged in to the school and that this is the page where the webinar is shown.",
     room_err_signin="The room did not let the program in. Open the link in your browser to "
                     "check that it still works. If it does not, ask the school for a new link.",
     room_err_closed="The room still shows its entry form. The link may be old or "
@@ -1647,8 +1713,9 @@ T = {
     room_close_title="Идёт запись",
     room_close_ask="Идёт запись. Если закрыть программу сейчас, запись остановится и MP4 не "
                    "будет создан. Всё равно закрыть?",
-    room_err_link="Эта ссылка не похожа на вебинарную комнату. В адресе должно быть /room/. "
-                  "Скопируйте ссылку, которую вы получили для вебинара.",
+    room_err_link="Эта ссылка не похожа на вебинар. В адресе должно быть /room/ (вебинарная комната) или /pl/webinar/show (страница вебинара школы). Скопируйте адрес страницы, где показывают вебинар.",
+    room_err_gc_page="Страницу вебинара не удалось открыть. Сначала войдите на сайт школы («Вход на сайты») и повторите.",
+    room_err_gc_nostream="На странице вебинара нет адреса трансляции. Проверьте, что вы вошли на сайт школы и что это страница, где показывают вебинар.",
     room_err_signin="Комната не пустила программу. Откройте ссылку в браузере и проверьте, "
                     "что она ещё работает. Если нет — попросите у школы новую ссылку.",
     room_err_closed="Комната всё ещё показывает форму входа. Возможно, ссылка устарела или "
@@ -3002,7 +3069,8 @@ class App(tk.Tk):
         if not link:
             self._set_status("warn", "no_link"); return
         try:
-            room_split_link(link)
+            if not is_gc_webinar_link(link):
+                room_split_link(link)
         except RoomError as e:
             self._set_status("warn", e.key); return
         if not self._ffmpeg:                       # needed for the MP4 at the end
@@ -3114,24 +3182,36 @@ class App(tk.Tk):
         say = lambda m, tag="plain": self.after(0, lambda: self._log(m, tag))
         out = ""
         try:
-            room, init = room_signin(link)
-            say("   Signed in to the room")
-            if stop.is_set():                                  # Stop was pressed while signing in
-                self.after(0, lambda: self._room_end("st_room_cancel")); return
-            self.after(0, lambda: self._set_status("busy", "st_room_wait"))
-            origin = "https://" + urllib.parse.urlparse(room).netloc
-            got = room_wait_for_stream(init, origin, stop)
-            if got is None:
-                self.after(0, lambda: self._room_end("st_room_cancel")); return
-            vt, ref, title = got
-            say(f"   On air. Video type: {vt or '(none)'}")
-            url = stream_from_setting(vt, ref)
+            fetch = None
+            if is_gc_webinar_link(link):                       # a school's own webinar page (GetCourse)
+                ck = self._cookie_file_for(link)
+                url, title = gc_webinar_stream(link, cookie_header_for(ck, link) if ck else "", self._ssl_ctx())
+                say("   Webinar page read (the school's own broadcast)")
+                origin = "https://" + urllib.parse.urlparse(link).netloc
+                self.after(0, lambda: self._set_status("busy", "st_room_wait"))
+                if not gc_wait_for_playlist(url, origin, stop):
+                    self.after(0, lambda: self._room_end("st_room_cancel")); return
+                say("   On air")
+                fetch = lambda u, o=origin: gc_fetch(u, o)
+            else:
+                room, init = room_signin(link)
+                say("   Signed in to the room")
+                if stop.is_set():                              # Stop was pressed while signing in
+                    self.after(0, lambda: self._room_end("st_room_cancel")); return
+                self.after(0, lambda: self._set_status("busy", "st_room_wait"))
+                origin = "https://" + urllib.parse.urlparse(room).netloc
+                got = room_wait_for_stream(init, origin, stop)
+                if got is None:
+                    self.after(0, lambda: self._room_end("st_room_cancel")); return
+                vt, ref, title = got
+                say(f"   On air. Video type: {vt or '(none)'}")
+                url = stream_from_setting(vt, ref)
             say("   Stream: " + urllib.parse.urlparse(url).netloc + urllib.parse.urlparse(url).path)
             stem = safe_name(title) or "webinar"
             out = unique_path(self._dl_dir, stem, ".ts")
             say("   Recording to: " + os.path.basename(out))
             self.after(0, lambda: self._room_progress(0))
-            rec = RoomRecorder(url, out, stop, log=say,
+            rec = RoomRecorder(url, out, stop, log=say, fetch=fetch,
                                progress=lambda n, s, f: self.after(0, lambda: self._room_progress(s)))
             res = rec.run()
         except RoomError as e:
@@ -3386,6 +3466,8 @@ class App(tk.Tk):
                 name = ""
                 if title:
                     name = safe_name(title)
+                elif kind == "gcstream":
+                    name = ("webinar " + dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).query)).get("id", "")).strip()
                 elif kind == "getcourse" or len(embs) > 1:
                     name = f"{slug} - {k}" if len(embs) > 1 else slug
                 if name:
@@ -3599,6 +3681,8 @@ class App(tk.Tk):
             for k, (v, kind) in enumerate(find_players(html), 1):
                 if kind == "getcourse":     # its own title is a hash: name it after the page
                     add(v, "GetCourse", f"{k:02d} {slug}", named=True, pos=k)
+                elif kind == "gcstream":
+                    add(v, "Webinar", f"webinar {dict(urllib.parse.parse_qsl(urllib.parse.urlparse(page_url).query)).get('id', '')}".strip())
                 else:
                     add(v, "Kinescope", f"Kinescope {v.rsplit('/', 1)[-1]}")
 
@@ -3673,7 +3757,7 @@ class App(tk.Tk):
                     continue
                 for j, (v, kind) in enumerate(players, 1):
                     title = f"{i:02d} {lt}" + (f" ({j})" if len(players) > 1 else "")
-                    add(v, "GetCourse" if kind == "getcourse" else "Kinescope", title,
+                    add(v, {"getcourse": "GetCourse", "gcstream": "Webinar"}.get(kind, "Kinescope"), title,
                         named=True, pos=i, referer=lu, folder=folder)
                 if done % 10 == 0:
                     self.after(0, lambda d=done, n=total: self._log(f"   {d} of {n} lesson pages read", "info"))
