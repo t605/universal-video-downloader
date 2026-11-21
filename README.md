@@ -11,8 +11,11 @@ large high-contrast window, English and Russian.
 - **Course websites and private lessons.** Log in once with your own e-mail and password (for course sites built on
   GetCourse) or with an exported login file (any site), paste the address of a course page, press "Find videos":
   the program opens every lesson, lists all the videos, and saves the ones you tick into a folder named after the course.
-- **Webinar rooms.** Paste the link of a live webinar room, and the program records the broadcast from its start and
-  saves it as an MP4 (tested on one Rutube-based room type; see the limits below).
+- **Webinar rooms and school webinar pages.** Paste the link of a live webinar, press "Start recording" **before** it
+  begins, and the program records the broadcast (480p, about 1 GB per hour) and saves it as an MP4: rooms whose video comes
+  from Rutube or VK, and GetCourse school webinar pages (`/pl/webinar/show`, also with the name-and-e-mail entry). A VK room
+  that is already on air gives only the last half minute; after the end the program waits (up to 4 hours) for VK's own
+  full recording and saves that instead.
 - **One video from a link** from Vimeo, VK, Kinescope players and about 1,700 other sites known to the download engine
   (not every one works), YouTube among them. Saves at 480p. Optional "Sound only (MP3)".
 - **Convert to MP4** for recordings that are not in MP4 form.
@@ -35,7 +38,7 @@ The full step-by-step manual, written for beginners, is `README.txt` (English) a
   and does not try to get around the protection.
 - Log in to sites that ask for a CAPTCHA or a code sent by text message with a password: use the exported login file.
 - Windows only.
-- Rooms of webinar platforms other than the one it was built and tested for.
+- Webinar platforms other than Bizon365 rooms (Rutube or VK video) and GetCourse webinar pages.
 
 ## Is it all right to download this?
 
@@ -47,8 +50,11 @@ approved by YouTube, VK, Vimeo, GetCourse, Kinescope or any other website named 
 ## What was tested, and what was not
 
 Tested: the offline tests of the program (`python tests\test_room.py` and the other files in `tests`), real downloads of
-course lessons and a public video on a Windows 11 PC, installing and uninstalling the Setup, the course-page scan on one real
-course. **Not tested:** a clean second PC, screen scaling other than 100 %, other webinar platforms, every one of the 1,700 sites.
+course lessons and a public video on a Windows 11 PC, the course-page scan on one real course, three real live webinars of a
+school (recorded, MP4 decoded without errors), and one real VK broadcast (recorded live; VK's full recording, 2 h 28 min, was
+downloaded after the end with the program's own functions and its length matched). **Not tested:** the whole VK sequence
+inside the program window, a clean second PC, Windows 10, screen scaling other than 100 %, other webinar platforms, every one
+of the 1,700 sites.
 
 ## Build it yourself
 

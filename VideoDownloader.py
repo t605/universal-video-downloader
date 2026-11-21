@@ -18,7 +18,7 @@
 ║      --dir "<folder>"    where to save (default: Downloads)          ║
 ║      --insecure          skip certificate checks (last resort)       ║
 ║                                                                      ║
-║  Also: records live webinar rooms (Bizon365, Rutube video) to MP4.   ║
+║  Also: records webinar rooms (Bizon365: Rutube or VK video) to MP4.  ║
 ║  Supports 1,700+ sites. Known-tricky ones handled explicitly:        ║
 ║      VK / vkvideo.ru   session cookie lives on vk.com only, so the   ║
 ║                        session is copied across all VK domains and   ║
@@ -39,7 +39,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 
 APP_NAME = "Universal Video Downloader"
-APP_VER  = "9.23"
+APP_VER  = "9.28"
 
 # Under pythonw (no console) sys.stdout/stderr are None, and anything that
 # prints would crash. Send that output to a log file instead (fresh each start).
@@ -193,7 +193,8 @@ C = dict(bg="#F7F6F2", panel="#FFFFFF", panel2="#E4E1D8", border="#B4B2A9",
          header="#2C2C2A", text="#1F1F1D", muted="#55534E",
          blue="#185FA5", green="#3B6D11", green_text="#27500A", red="#A32D2D",
          orange="#854F0B", soft_blue="#E6F1FB", disabled="#9A988F",
-         pill_ok="#97C459", pill_warn="#EF9F27")
+         pill_ok="#97C459", pill_warn="#EF9F27",
+         btn_border="#767570", btn_dis="#8A8880")      # secondary buttons: white, dark edge (4.3:1 on the page)
 UI = "Segoe UI" if sys.platform == "win32" else "Helvetica"
 
 FORMAT_MERGE  = ("bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/"
@@ -371,6 +372,18 @@ def _darken(h, p=0.15):
 def _btn(parent, text, cmd, bg, fg="#FFFFFF", font=(UI, 12), **kw):
     """Flat button that darkens on hover. Its colour lives on the widget
     (b._bg) so _recolor can change it without the hover undoing that."""
+    if bg == C["panel2"]:                       # secondary button (Back, Clear, Cancel...): white with a visible edge
+        b = tk.Button(parent, text=text, command=cmd, bg="#FFFFFF", fg=fg if fg != "#FFFFFF" else C["text"],
+                      font=font, relief=tk.SOLID, bd=1, cursor="hand2", disabledforeground=C["btn_dis"],
+                      activebackground=C["soft_blue"], activeforeground=C["text"],
+                      highlightthickness=0, **kw)      # SOLID = a crisp black 1 px edge (Tk draws no coloured ring on a button)
+        b._bg = "#FFFFFF"
+        def _on(_=None):
+            if b["state"] != tk.DISABLED: b.config(bg=C["soft_blue"])
+        def _off(_=None): b.config(bg=b._bg)
+        b.bind("<Enter>", _on); b.bind("<Leave>", _off)
+        b.bind("<FocusIn>", _on); b.bind("<FocusOut>", _off)
+        return b
     b = tk.Button(parent, text=text, command=cmd, bg=bg, fg=fg, font=font,
                   relief=tk.FLAT, bd=0, cursor="hand2", disabledforeground="#F2F1EC",
                   activebackground=_darken(bg), activeforeground=fg, **kw)
@@ -981,6 +994,103 @@ def school_login(page_url, email, password, timeout=30, allow_http=False):
     _write_netscape(jar, path)
     return path, checked
 
+
+def school_enter_room(page_url, name, email, timeout=30, allow_http=False):
+    """Enter a GetCourse school's webinar room the way its "Enter the room" button does, for a school
+    that has NO password (the page shows a small form: name + e-mail). Added 2026-11-17 after a real
+    school's webinar page redirected the program to /enterweb_back (a guest: accountUserId = -1).
+    GET the webinar page -> if it shows the form (action .../block-public/process?id=N, same host),
+    POST the page's own hidden fields plus name and e-mail -> GET the webinar page again: it must now
+    know the visitor (accountUserId > 0) or hold the stream address. The session cookies are written
+    like school_login does. Name and e-mail go ONLY to that school, over https with certificate
+    checks, and are never logged or saved. Returns the path of the cookies.txt.
+    NOT TESTED against a real school (only the fake one in tests\\test_webinar.py). Raises LoginError."""
+    parts = urllib.parse.urlsplit(page_url or "")
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise LoginError("login_err_site")
+    if "@" in parts.netloc or "\\" in (page_url or "") or " " in parts.netloc:
+        raise LoginError("login_err_address")
+    if parts.scheme != "https" and not allow_http:
+        raise LoginError("login_err_https")
+    host = host_of(page_url)
+    jar = http.cookiejar.CookieJar()
+    tls = urllib.request.HTTPSHandler(context=ssl.create_default_context())
+    cookies = urllib.request.HTTPCookieProcessor(jar)
+    op = urllib.request.build_opener(cookies, tls)
+    op_post = urllib.request.build_opener(cookies, tls, _NoRedirect)    # the form data is never re-sent elsewhere
+
+    def call(url, data=None, ref=""):
+        hdrs = {"User-Agent": UA, "Accept-Language": "ru,en;q=0.8"}
+        if data is not None:
+            hdrs.update({"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                         "X-Requested-With": "XMLHttpRequest", "Referer": ref or page_url,
+                         "Origin": f"{parts.scheme}://{parts.netloc}",
+                         "Accept": "application/json, text/javascript, */*"})
+            data = urllib.parse.urlencode(data).encode("utf-8")
+        try:
+            with (op if data is None else op_post).open(
+                    urllib.request.Request(url, data=data, headers=hdrs), timeout=timeout) as r:
+                return r.geturl(), r.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as e:
+            if data is not None and 300 <= e.code < 400:      # a redirect after the POST is an answer, not an error
+                return url, ""
+            raise LoginError("login_err_other", f"HTTP {e.code}")
+        except Exception as e:
+            raise LoginError("login_err_net", clean(e)[:120])
+
+    def known(html):                                           # does the page know the visitor?
+        m = re.search(r"accountUserId\s*=\s*['\"]?(-?\d+)", html)
+        return bool((m and int(m.group(1)) > 0) or gc_stream_in_page(html))
+
+    def brief(s):                                              # what the site answered, without tags / your data
+        s = re.sub(r"<[^>]+>", " ", str(s))
+        for secret in (name, email):
+            if secret and len(secret) >= 3:
+                s = s.replace(secret, "***")
+        return re.sub(r"\s+", " ", s).strip()[:240]
+
+    final, html = call(page_url)
+    if not known(html):
+        import html as _h
+        m = re.search(r'<form\b[^>]*\baction="([^"]*block-public/process[^"]*)"[^>]*>(.*?)</form>', html, re.S)
+        if not m:
+            raise LoginError("enter_err_form")
+        action = urllib.parse.urljoin(final, _h.unescape(m.group(1)))
+        if host_of(action) != host:
+            raise LoginError("login_err_site")                 # never post to another site
+        data = {}
+        for im in re.finditer(r"<input\b([^>]*)>", m.group(2)):
+            at = {k.lower(): _h.unescape(v) for k, _, v in re.findall(r'([\w-]+)\s*=\s*(["\'])(.*?)\2', im.group(1), re.S)}
+            nm, typ = at.get("name"), at.get("type", "text").lower()
+            if not nm or typ in ("submit", "button", "checkbox", "radio", "file", "password"):
+                continue
+            data[nm] = at.get("value", "")
+            if "full_name" in nm or nm.endswith("[name]"):
+                data[nm] = name
+            elif "[email]" in nm:
+                data[nm] = email
+        if not any("[email]" in k for k in data):
+            data["formParams[email]"] = email
+        if not any("full_name" in k for k in data):
+            data["formParams[full_name]"] = name
+        _, body = call(action, data, ref=final)
+        try:
+            ans = json.loads(body) if body.strip() else {}
+        except ValueError:
+            ans = {}
+        err = isinstance(ans, dict) and (ans.get("errorMessage") or ans.get("error") or ans.get("errors"))
+        if err:
+            raise LoginError("enter_err_fail", brief(err if isinstance(err, str) else json.dumps(err, ensure_ascii=False)))
+        final, html = call(page_url)
+        if not known(html):
+            raise LoginError("enter_err_fail", "the page still shows the entry form" if "block-public/process" in html
+                             else "the page does not know the visitor")
+    safe = re.sub(r"[^A-Za-z0-9.-]", "_", host)
+    path = os.path.join(LOGIN_DIR, f"{safe}.guest.txt")   # NOT <host>.txt: a saved password login stays
+    _write_netscape(jar, path)
+    return path
+
+
 # ══════════════════════════════════════════════════════════════
 #  4b.  WEBINAR ROOMS  (Bizon365 rooms, e.g. online.<school>.ru/room/...)
 #  Link -> sign in like the room page does -> read the room's live channel
@@ -993,7 +1103,13 @@ class RoomError(Exception):
     def __init__(self, key, **info):
         super().__init__(key); self.key = key; self.info = info
 
-ROOM_WS = "wss://ws3.bizon365.ru"          # the room page uses this host
+
+class StreamOver(Exception):
+    """Raised by a recorder's `refresh` function when the platform shows that the broadcast is over
+    (VK: the video is no longer a live stream). It ends the recording cleanly, it is not an error."""
+
+
+ROOM_WS ="wss://ws3.bizon365.ru"          # the room page uses this host
 ROOM_FIELDS = ("username", "email", "phone", "param1", "param2", "param3", "cu1", "sup")
 
 
@@ -1041,17 +1157,22 @@ def gc_stream_in_page(html: str) -> str:
     return m.group(0) if m else ""
 
 
-def gc_webinar_stream(link: str, cookie_header: str = "", ctx=None):
-    """(playlist address, name) read from a GetCourse webinar page. The page needs the school's login.
-    RoomError('room_err_gc_page') if the page cannot be read, ('room_err_gc_nostream') if it holds no stream."""
+def gc_read_page(link: str, cookie_header: str = "", ctx=None) -> str:
+    """The text of a GetCourse webinar page (needs the school's login). RoomError('room_err_gc_page') if unreadable."""
     hdrs = {"User-Agent": UA, "Accept-Language": "ru,en;q=0.8"}
     if cookie_header:
         hdrs["Cookie"] = cookie_header
     try:
         with open_url(urllib.request.Request(link, headers=hdrs), 30, ctx) as r:
-            page = r.read().decode("utf-8", errors="ignore")
+            return r.read().decode("utf-8", errors="ignore")
     except Exception:
         raise RoomError("room_err_gc_page")
+
+
+def gc_webinar_stream(link: str, cookie_header: str = "", ctx=None, page: str = ""):
+    """(playlist address, name) read from a GetCourse webinar page. The page needs the school's login.
+    RoomError('room_err_gc_page') if the page cannot be read, ('room_err_gc_nostream') if it holds no stream."""
+    page = page or gc_read_page(link, cookie_header, ctx)
     url = gc_stream_in_page(page)
     if not url:
         raise RoomError("room_err_gc_nostream")
@@ -1079,6 +1200,262 @@ def gc_wait_for_playlist(url: str, origin: str, stop, poll: float = 10.0, fetch=
             pass
         stop.wait(poll)
     return False
+
+
+# ── school LIVE webinar through the school's video service (found 2026-11-20 on t-panyushkina.com, webinar.subtype = 1) ──
+# The page's own static playlist address answers 404 (`webinarStreamViaVhBridge = true`). The real address comes from the video
+# service: the page holds a viewer token  loadWebinarVideoByStreamJwt('<jwt>')  (payload {"id": <webinar id>}); POST it as the
+# form field "jwt" to https://<api host>/api/live-master-api/v1/get-stream-info  (headers Origin/Referer = the school) ->
+# {"status":"ok","isset_closed_tasks":false,"tasks":[{"task_id","process_id","playlists":[master address, master address]}]}.
+# `tasks` is empty while nothing is on air. The master addresses carry a signature and work with gc_fetch + RoomRecorder.
+GC_LIVE_API_HOSTS = ["live-master-api-union.gcfiles.net", "live-pp1.gcfiles.net"]
+
+
+def gc_viewer_jwt(page: str) -> str:
+    """The viewer token a school's live webinar page holds for its video service ('' if none)."""
+    m = re.search(r"loadWebinarVideoByStreamJwt\(\s*['\"](eyJ[0-9A-Za-z_\-.]+)['\"]", page)
+    return m.group(1) if m else ""
+
+
+def _post_form(url: str, fields: dict, origin: str, timeout: float = 30):
+    """(status, bytes) of a multipart/form-data POST like the browser's FormData (the video service wants the school as Origin)."""
+    b = "----WebKitFormBoundary" + os.urandom(8).hex()
+    data = b"".join(f'--{b}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode() for k, v in fields.items())
+    data += f"--{b}--\r\n".encode()
+    return _http(url, data=data, headers={"Content-Type": f"multipart/form-data; boundary={b}", "Origin": origin,
+                                          "Referer": origin + "/"}, timeout=timeout)
+
+
+def gc_live_info(jwt: str, origin: str, post=None) -> dict:
+    """The video service's answer about the school's running stream. RoomError('room_err_gc_info') if no server answers."""
+    post = post or (lambda url, fields: _post_form(url, fields, origin))
+    for host in GC_LIVE_API_HOSTS:
+        try:
+            st, body = post(f"https://{host}/api/live-master-api/v1/get-stream-info", {"jwt": jwt})
+            info = json.loads(body.decode("utf-8", "replace"))
+        except (OSError, ValueError):
+            continue
+        if st == 200 and isinstance(info, dict) and info.get("status") == "ok":
+            return info
+    raise RoomError("room_err_gc_info")
+
+
+def gc_live_playlists(info: dict):
+    """([master playlist addresses], ended) from get-stream-info: no addresses while nothing is on air;
+    ended = the service knows closed streams and has no running one."""
+    tasks = info.get("tasks") or []
+    if not tasks or not isinstance(tasks[0], dict):
+        return [], bool(info.get("isset_closed_tasks"))
+    pls = [p for p in (tasks[0].get("playlists") or []) if isinstance(p, str) and p.lower().startswith(("http://", "https://"))]
+    return pls, False
+
+
+def _first_live_playlist(pls, get):
+    for u in pls:
+        try:
+            if b"#EXTM3U" in get(u)[:400]:
+                return u
+        except Exception:
+            continue
+    return ""
+
+
+def gc_wait_for_live(jwt: str, origin: str, stop, poll: float = 10.0, post=None, get=None):
+    """Wait until the school's live stream is on air. (master playlist address, on_air_at_first_look) or None if `stop` was set first.
+    RoomError('room_err_gc_info') if the video service cannot be asked at all."""
+    get = get or (lambda u: gc_fetch(u, origin))
+    first, fails = True, 0
+    while not stop.is_set():
+        try:
+            pls, _ended = gc_live_playlists(gc_live_info(jwt, origin, post))
+        except RoomError:                       # the wait can last hours: one failed answer must not end it
+            fails += 1
+            if fails >= 5:
+                raise
+            stop.wait(poll)
+            continue
+        fails = 0
+        url = _first_live_playlist(pls, get)
+        if url:
+            return url, first
+        if not pls:                             # only "nothing on air" means we were early; a playlist that did not answer yet does not
+            first = False
+        stop.wait(poll)
+    return None
+
+
+def gc_live_refresh(jwt: str, origin: str, post=None, get=None):
+    """A fresh master playlist address of the running stream (RoomRecorder's refresh). None if there is no usable one now;
+    StreamOver when the service shows the broadcast as finished (the recorder asks twice before it believes it)."""
+    get = get or (lambda u: gc_fetch(u, origin))
+    pls, ended = gc_live_playlists(gc_live_info(jwt, origin, post))
+    if not pls:
+        if ended:
+            raise StreamOver()
+        return None
+    return _first_live_playlist(pls, get) or None
+
+
+# ── school "auto-webinar" (a recording that the school plays on a schedule, GetCourse webinar.subtype = 2) ──
+# Found 2026-11-17 on a real school: the page opens a Socket.IO channel (hosts/path/ids are in the page),
+# joins `public_auto_<id>_<launch>` and asks `initAutoWebinar`; the answer is an 'update' event with
+# actionType 4 (video): its `url` holds /player/<hash>/, plus videoTimestamp and videoOffset. The school's own
+# /pl/fileservice/api/aw-master?hash=..&start=..&timeoffset=.. returns the path of a master playlist on a
+# "vh" host; its variants point to .../get-media-playlist?jwt=..; the same address with get-video-info
+# returns JSON {data:{urls:[{url,dur}...], host}}: the WHOLE video from segment 0 (not a sliding window).
+GC_MASTER_HOSTS = ["https://player-ua.gceuproxy.com", "https://vh-api-1-de.gceuproxy.com",
+                   "https://vh-api2-hel1-dc8.gceuproxy.com", "https://vhapi04.getcourse.ru",
+                   "https://vhapi02.getcourse.ru", "https://vhapi03.getcourse.ru"]
+GC_CDN_ORDERS = ["cdnvideo,integros,gcore", "gcore,kievstar,cdnvideo,integros", "kievstar,cdnvideo,gcore,integros"]
+GC_AUTO_URL = "https://autoweb.invalid/playlist.m3u8"       # name of the playlist we build ourselves
+
+
+def gc_auto_info(page: str) -> dict:
+    """The values a school auto-webinar page holds for its live channel; {} when the page is not an
+    auto-webinar. Keys: wid, sign, visitor, launch, account, session, user, hosts, path."""
+    def one(pat):
+        m = re.search(pat, page)
+        return m.group(1) if m else ""
+    if one(r"webinar\.subtype\s*=\s*(\d+)") != "2":
+        return {}
+    try:
+        hosts = json.loads(one(r"webinarWebsocketHosts\s*=\s*(\[[^\]]*\])") or "[]")
+    except ValueError:
+        hosts = []
+    info = {"wid": one(r"webinar\.id\s*=\s*(\d+)"), "sign": one(r"webinar\.sign\s*=\s*'([^']+)'"),
+            "visitor": one(r"webinar\.visitorId\s*=\s*'([^']*)'"), "launch": one(r"webinar\.launchId\s*=\s*(\d+)"),
+            "account": one(r"window\.accountId\s*=\s*(\d+)"), "session": one(r"window\.gcSessionId\s*=\s*(\d+)"),
+            "user": one(r"window\.accountUserId\s*=\s*(\d+)"),
+            "hosts": [h for h in hosts if isinstance(h, str) and re.fullmatch(r"[A-Za-z0-9.-]+", h)],
+            "path": one(r'webinarWebsocketPath\s*=\s*"([^"]+)"').replace("\\/", "/")}
+    if not (info["wid"] and info["sign"] and info["launch"] and info["account"] and info["hosts"] and info["path"]):
+        raise RoomError("room_err_gc_nostream")
+    if not info["user"]:                                    # not logged in: the channel would refuse us
+        raise RoomError("room_err_gc_page")
+    return info
+
+
+def gc_wait_for_video(info: dict, origin: str, stop, ws_url=None, reconnects=6, resend=30.0):
+    """Wait on the webinar channel for the school's video message.
+    Returns {'hash','start','offset'} or None if `stop` was set first. RoomError('room_err_gc_socket') if
+    the channel cannot be opened. `ws_url(host)` gives the base address (tests use ws://127.0.0.1:port)."""
+    ws_url = ws_url or (lambda h: "wss://" + h)
+    chans = ["public_%s" % info["wid"], "public_%s_%s" % (info["wid"], info["launch"]),
+             "public_auto_%s_%s" % (info["wid"], info["launch"])]
+    qs = urllib.parse.urlencode({
+        "accountId": info["account"], "sessionId": info["session"], "webinarId": info["wid"],
+        "userId": info["user"], "sign": info["sign"], "launchId": info["launch"],
+        "visitorId": info["visitor"], "EIO": "3", "transport": "websocket"})
+    tries = 0
+    while not stop.is_set():
+        host = info["hosts"][tries % len(info["hosts"])]
+        ws = None
+        try:
+            ws = WS(f"{ws_url(host)}{info['path'].rstrip('/')}/?{qs}", origin)
+            first = ws.recv(15) or ""
+            if not first.startswith("0"):
+                raise RoomError("room_err_gc_socket")
+            ping = json.loads(first[1:]).get("pingInterval", 25000) / 1000.0
+            ws.send("40")
+            for c in chans:
+                ws.send("42" + json.dumps(["join", {"channel": c, "sign": info["sign"]}]))
+            ask = lambda: ws.send("42" + json.dumps(["initAutoWebinar", {"id": int(info["wid"]), "launchNumber": str(info["launch"])}]))
+            ask()
+            now = time.time(); next_ping, next_ask = now + ping, now + resend
+            while not stop.is_set():
+                now = time.time()
+                if now >= next_ping:
+                    ws.send("2"); next_ping = now + ping
+                if now >= next_ask:
+                    ask(); next_ask = now + resend
+                m = ws.recv(1.0)
+                if not m or not m.startswith("42"):
+                    continue
+                tries = 0
+                try:
+                    arr = json.loads(m[2:])
+                except ValueError:
+                    continue
+                if len(arr) > 1 and arr[0] == "update" and isinstance(arr[1], dict) \
+                        and arr[1].get("actionType") == 4 and isinstance(arr[1].get("url"), str):
+                    j = arr[1]
+                    h = re.match(r".*/player/(.*)/", j["url"])   # the hash holds a "/" (two parts): keep
+                    if h:
+                        return {"hash": h.group(1), "start": int(j.get("videoTimestamp") or 0),
+                                "offset": int(j.get("videoOffset") or 0)}
+        except (OSError, EOFError, ValueError, RoomError):
+            tries += 1
+            if tries > reconnects:
+                raise RoomError("room_err_gc_socket")
+            stop.wait(3)
+        finally:
+            if ws: ws.close()
+    return None
+
+
+def gc_auto_segments(origin: str, video: dict, cookie_header: str, stop, hosts=None, get=None,
+                     pause: float = 1.5, attempts: int = 12):
+    """(list of (segment address, seconds)) for the whole auto-webinar video, about 480p.
+    `get(url, headers)` -> (status, bytes) is replaceable for tests. RoomError('room_err_gc_info') on failure."""
+    get = get or (lambda u, h: _http(u, headers=h, timeout=30))
+    hdr = {"Referer": origin + "/", "Origin": origin}
+    q = "/pl/fileservice/api/aw-master?" + urllib.parse.urlencode(
+        {"hash": video["hash"], "start": video["start"], "timeoffset": video["offset"]})
+    try:
+        st, body = get(origin + q, dict(hdr, Cookie=cookie_header) if cookie_header else hdr)
+    except OSError:
+        raise RoomError("room_err_gc_info")
+    path = body.decode("utf-8", "replace").strip()
+    if st != 200 or not path.startswith("/api/autoweb/"):
+        raise RoomError("room_err_gc_info")
+    master = ""
+    for n in range(attempts):                               # the servers answer 503 now and then: try others
+        if stop.is_set():
+            raise RoomError("room_err_gc_info")
+        base = (hosts or GC_MASTER_HOSTS)[n % len(hosts or GC_MASTER_HOSTS)]
+        cdn = GC_CDN_ORDERS[n % len(GC_CDN_ORDERS)]
+        try:
+            st, body = get(f"{base}{path}&cdn-list={cdn}&v={int(time.time() * 1000)}", hdr)
+            if st == 200 and b"#EXTM3U" in body[:50]:
+                master = body.decode("utf-8", "replace"); mbase = base; break
+        except OSError:
+            pass
+        stop.wait(pause)
+    if not master:
+        raise RoomError("room_err_gc_info")
+    cands, lines = [], [l.strip() for l in master.splitlines()]
+    for i, ln in enumerate(lines):
+        m = re.search(r"RESOLUTION=\d+x(\d+)", ln) if ln.startswith("#EXT-X-STREAM-INF") else None
+        if m and i + 1 < len(lines) and lines[i + 1] and not lines[i + 1].startswith("#"):
+            cands.append((int(m.group(1)), urllib.parse.urljoin(mbase + "/", lines[i + 1])))
+    if not cands:
+        raise RoomError("room_err_gc_info")
+    ok = [c for c in cands if c[0] <= 480]
+    height = max(c[0] for c in ok) if ok else min(c[0] for c in cands)     # 480p like everywhere else
+    media = next(u for h, u in cands if h == height)
+    info_url = media.replace("/get-media-playlist", "/get-video-info", 1)
+    try:
+        st, body = get(info_url, hdr)
+        data = json.loads(body.decode("utf-8", "replace"))["data"]
+    except (OSError, ValueError, KeyError, TypeError):
+        raise RoomError("room_err_gc_info")
+    host, urls = data.get("host"), data.get("urls")
+    if st != 200 or not host or not isinstance(urls, list) or not urls:
+        raise RoomError("room_err_gc_info")
+    segs = [("https://" + host + u["url"], float(u.get("dur") or 0)) for u in urls
+            if isinstance(u, dict) and isinstance(u.get("url"), str)]
+    if not segs:
+        raise RoomError("room_err_gc_info")
+    return segs
+
+
+def gc_auto_playlist(segs) -> str:
+    """A finished HLS playlist (ends with ENDLIST) for the recorder."""
+    out = ["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-TARGETDURATION:%d" % (int(max(d for _, d in segs)) + 1),
+           "#EXT-X-MEDIA-SEQUENCE:0"]
+    for u, d in segs:
+        out += ["#EXTINF:%.3f," % d, u]
+    return "\n".join(out + ["#EXT-X-ENDLIST", ""])
 
 
 def room_signin(link: str):
@@ -1214,10 +1591,12 @@ def room_open_channel(init: dict, origin: str, ws_base: str = ROOM_WS):
     return ws, json.loads(first[1:]).get("pingInterval", 25000) / 1000.0
 
 
-def room_wait_for_stream(init, origin, stop, ws_base=ROOM_WS, on_state=None, reconnects=5):
+def room_wait_for_stream(init, origin, stop, ws_base=ROOM_WS, on_state=None, reconnects=5, info=None):
     """Wait on the live channel until the room is on air with a video address.
-    Returns (video type, address, title), or None if `stop` was set first."""
-    state, tries = {}, 0
+    Returns (video type, address, title), or None if `stop` was set first.
+    `info` (a dict, optional) gets info["on_air_at_join"] = True when the very first message from the room already said
+    "on air": the broadcast had begun before we came, so its beginning cannot be recorded."""
+    state, tries, first_msg = {}, 0, True
     while not stop.is_set():
         ws = None
         try:
@@ -1241,8 +1620,11 @@ def room_wait_for_stream(init, origin, stop, ws_base=ROOM_WS, on_state=None, rec
                     if on_state:
                         on_state(state)
                     if state.get("online") and state.get("hangoutsUrl"):
+                        if info is not None:
+                            info["on_air_at_join"] = first_msg
                         return (state.get("videoType") or "", state["hangoutsUrl"],
                                 state.get("title") or "")
+                    first_msg = False
                 tries = 0
         except (OSError, EOFError, ValueError, RoomError):
             tries += 1
@@ -1254,9 +1636,116 @@ def room_wait_for_stream(init, origin, stop, ws_base=ROOM_WS, on_state=None, rec
     return None
 
 
-def stream_from_setting(video_type: str, ref: str, fetch=None) -> str:
-    """The room's video setting -> an HLS playlist address. Rutube (live) and
-    direct .m3u8 addresses only; other kinds raise RoomError('room_err_type')."""
+def vk_page_url(ref: str) -> str:
+    """The room's VK setting -> an address yt-dlp understands, or ''. Accepts a full VK address
+    (video_ext.php?oid=..&id=.. , /video-1_2 , /live-1_2) or a bare 'oid_id' pair."""
+    ref = (ref or "").strip().replace("&amp;", "&")
+    if ref.startswith("//"):
+        ref = "https:" + ref
+    if re.match(r"https?://([a-z0-9-]+\.)*(vk\.com|vk\.ru|vkvideo\.ru)/", ref, re.I):
+        # The room's player-page form (video_ext.php?oid=..&id=..&hash=..) is NOT read by yt-dlp ("Unable to extract
+        # player params": VK serves a new page without playerParams), but the same video as /video<oid>_<id>?hash=..
+        # is (tested 2026-11-20 on a running live broadcast). Other VK addresses are passed on unchanged.
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(ref).query)
+        if "video_ext.php" in ref and q.get("oid") and q.get("id"):
+            key = (q.get("hash") or [""])[0]
+            return "https://vk.com/video%s_%s" % (q["oid"][0], q["id"][0]) + ("?hash=" + key if key else "")
+        return ref
+    m = re.match(r"vk\s*:\s*(\d+)\s*,\s*(-?\d+)\s*,\s*\d*\s*,\s*([0-9a-f]+)\s*$", ref, re.I)
+    if m:                                             # the room's own form: "vk: <id>,<owner>,<n>,<hash>"
+        return "https://vk.com/video%s_%s?hash=%s" % (m.group(2), m.group(1), m.group(3))
+    m = re.search(r"oid=(-?\d+)&id=(\d+)", ref) or re.search(r"(?:video|live)?(-?\d+)_(\d+)", ref)
+    return "https://vk.com/video%s_%s" % (m.group(1), m.group(2)) if m else ""
+
+
+def vk_stream_url(ref: str, cookiefile: str = "", live_only: bool = False, info_out=None) -> str:
+    """A VK video or live broadcast -> its HLS playlist address (through yt-dlp, no download).
+    Certificates are checked like everywhere else in the program (truststore + no-certifi); a login
+    file is used only when it holds VK cookies. Every failure is room_err_vk (the real reason is not shown).
+    live_only=True (used while recording): a video that is no longer a live stream raises StreamOver -
+    the broadcast has ended."""
+    page = vk_page_url(ref)
+    if not page:
+        raise RoomError("room_err_vk")
+    opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "socket_timeout": 30,
+            "compat_opts": {"no-certifi"}}
+    try:
+        if cookiefile and any(re.search(r"(^|\.)(vk\.com|vk\.ru|vkvideo\.ru)$", d) for d in cookie_domains(cookiefile)):
+            opts["cookiefile"] = widen_vk_cookies(cookiefile)
+    except Exception:
+        pass
+    try:
+        import yt_dlp
+        with yt_dlp.YoutubeDL(opts) as y:
+            info = y.extract_info(page, download=False)
+    except Exception:
+        raise RoomError("room_err_vk")
+    if info_out is not None:                          # what the caller may want to know: still live? how long?
+        info_out.update(is_live=info.get("is_live"), duration=info.get("duration"))
+    if live_only and info.get("is_live") is False:
+        raise StreamOver()
+    fmts = [f for f in (info.get("formats") or [info])
+            if ".m3u8" in (f.get("url") or "") or "m3u8" in (f.get("protocol") or "")]
+    if not fmts:
+        raise RoomError("room_err_vk")
+    for f in fmts:                                    # a master playlist: the recorder picks the best stream
+        if (f.get("manifest_url") or "").startswith("http"):
+            return f["manifest_url"]
+    fit = [f for f in fmts if 0 < (f.get("height") or 0) <= 480]      # 480p like everything else; else the lowest
+    if fit:
+        return max(fit, key=lambda f: (f.get("height") or 0, f.get("tbr") or 0))["url"]
+    return min(fmts, key=lambda f: (f.get("height") or 10 ** 6, f.get("tbr") or 10 ** 6))["url"]
+
+
+VK_FULL_WAIT_MIN = 240         # (owner's decision 2026-11-20: VK needed 3 h 20 min to publish the full recording) how long (minutes) a finished VK broadcast is waited for the platform's full recording
+
+
+def vk_full_recording_url(ref: str, min_seconds: float, cookiefile: str = "", margin: float = 30.0):
+    """(playlist address, length in seconds) of the platform's FULL recording of a finished VK broadcast, or None while it is
+    not ready: VK still shows a live stream, answers "no video formats" (it is still processing), or the video is not longer
+    than what was recorded live (+ `margin` seconds)."""
+    got = {}
+    try:
+        url = vk_stream_url(ref, cookiefile, info_out=got)
+    except (RoomError, StreamOver):
+        return None
+    dur = got.get("duration") or 0
+    if got.get("is_live") is False and dur >= min_seconds + margin:
+        return url, dur
+    return None
+
+
+def vk_wait_for_full(ref, min_seconds, stop, resolve=None, max_wait=VK_FULL_WAIT_MIN * 60.0, interval=180.0, log=None,
+                     progress=None):
+    """Ask again every `interval` seconds until the full recording is ready: (address, length), or None after `max_wait`
+    seconds or when `stop` is set. `resolve(ref, min_seconds)` defaults to vk_full_recording_url.
+    progress(checks_done, seconds_waited) is called after every unsuccessful check (the window shows the time waited)."""
+    resolve = resolve or vk_full_recording_url
+    log = log or (lambda m: None)
+    t0 = time.time()
+    end, tries = t0 + max_wait, 0
+    while not stop.is_set():
+        tries += 1
+        try:
+            got = resolve(ref, min_seconds)
+        except Exception:                                   # one odd answer must not end a 4-hour wait
+            got = None
+        if got:
+            log(f"   VK has published the full recording ({fmt_hms(got[1])}), after {tries} check(s)")
+            return got
+        if time.time() + interval > end:
+            log(f"   VK did not publish the full recording within {int(max_wait // 60)} minutes")
+            return None
+        if progress:
+            try: progress(tries, time.time() - t0)
+            except Exception: pass
+        stop.wait(interval)
+    return None
+
+
+def stream_from_setting(video_type: str, ref: str, fetch=None, vk_resolve=None) -> str:
+    """The room's video setting -> an HLS playlist address. Rutube (live), VK (through yt-dlp) and
+    direct .m3u8 addresses; other kinds raise RoomError('room_err_type')."""
     fetch = fetch or (lambda u: _http(u)[1].decode("utf-8", "replace"))
     ref = (ref or "").strip()
     if ref.startswith("//"):
@@ -1266,6 +1755,8 @@ def stream_from_setting(video_type: str, ref: str, fetch=None) -> str:
             raise RoomError("room_err_stream")
         return ref
     vt = (video_type or "").lower()
+    if vt == "vk" or re.search(r"(vk\.com|vk\.ru|vkvideo\.ru)/", ref, re.I):
+        return (vk_resolve or vk_stream_url)(ref)
     if not vt and (re.fullmatch(r"[0-9a-f]{32}", ref) or "rutube.ru" in ref):
         vt = "rutube"
     if vt != "rutube":
@@ -1291,7 +1782,7 @@ def stream_from_setting(video_type: str, ref: str, fetch=None) -> str:
 def hls_parse(text: str, base: str) -> dict:
     """A media playlist -> {'segments': [(number, address, seconds)], 'endlist': bool,
     'init': address or ''}. The number is the segment's own sequence number."""
-    seq, segs, dur, end, init = 0, [], 0.0, False, ""
+    seq, segs, dur, end, init, enc = 0, [], 0.0, False, "", False
     for ln in (l.strip() for l in text.splitlines()):
         if not ln:
             continue
@@ -1300,6 +1791,10 @@ def hls_parse(text: str, base: str) -> dict:
             except ValueError: pass
         elif ln.startswith("#EXT-X-ENDLIST"):
             end = True
+        elif ln.startswith("#EXT-X-KEY:"):
+            m = re.search(r"METHOD=([A-Z0-9-]+)", ln)
+            if m and m.group(1) != "NONE":
+                enc = True                                           # encrypted pieces: the program cannot (and must not) read them
         elif ln.startswith("#EXT-X-MAP:"):
             m = re.search(r'URI="([^"]+)"', ln)
             if m: init = urllib.parse.urljoin(base, m.group(1))
@@ -1311,35 +1806,100 @@ def hls_parse(text: str, base: str) -> dict:
             if url.lower().startswith(("http://", "https://")):    # never file:// or ftp://
                 segs.append((seq + len(segs), url, dur))
             dur = 0.0
-    return {"segments": segs, "endlist": end, "init": init}
+    return {"segments": segs, "endlist": end, "init": init, "encrypted": enc}
 
 
-def hls_best_variant(text: str, base: str) -> str:
-    """For a master playlist: the address of the highest-bandwidth stream, else ''."""
-    best, best_bw, lines = "", -1, [l.strip() for l in text.splitlines()]
+def hls_best_variant(text: str, base: str, max_height: int = 480) -> str:
+    """For a master playlist: the address of the stream to record, else ''. Like every download in this program the
+    recording is made in 480p (owner's rule, 2026-11-20: a webinar in 720p was 8 GB for 3 hours, in 480p it is about 3 GB):
+    the sharpest stream that is not higher than `max_height`; if every stream is higher, the lowest one; if the playlist
+    names no picture sizes, the highest bandwidth up to 1.6 Mbit/s, else the lowest bandwidth."""
+    items, lines = [], [l.strip() for l in text.splitlines()]
     for i, ln in enumerate(lines):
         if ln.startswith("#EXT-X-STREAM-INF"):
             m = re.search(r"BANDWIDTH=(\d+)", ln)
-            bw = int(m.group(1)) if m else 0
+            r = re.search(r"RESOLUTION=\d+x(\d+)", ln)
             for nxt in lines[i + 1:]:
                 if nxt and not nxt.startswith("#"):
-                    if bw > best_bw:
-                        best, best_bw = urllib.parse.urljoin(base, nxt), bw
+                    items.append((int(r.group(1)) if r else 0, int(m.group(1)) if m else 0,
+                                  urllib.parse.urljoin(base, nxt)))
                     break
-    return best
+    if not items:
+        return ""
+    known = [x for x in items if x[0]]
+    if known:
+        fit = [x for x in known if x[0] <= max_height]
+        return (max(fit, key=lambda x: (x[0], x[1])) if fit else min(known, key=lambda x: (x[0], x[1])))[2]
+    fit = [x for x in items if x[1] <= 1_600_000]
+    return (max(fit, key=lambda x: x[1]) if fit else min(items, key=lambda x: x[1]))[2]
 
 
 def unique_path(folder: str, stem: str, ext: str) -> str:
-    """folder/stem.ext, or 'stem (2).ext' ... - an existing file is never overwritten."""
-    out, n = os.path.join(folder, stem + ext), 2
+    """folder/stem.ext, or 'stem (1).ext', 'stem (2).ext' ... - an existing file is never overwritten."""
+    out, n = os.path.join(folder, stem + ext), 1
     while os.path.exists(out):
         out = os.path.join(folder, f"{stem} ({n}){ext}"); n += 1
     return out
 
 
+# leftovers of an unfinished download: partial files and the unmerged video/audio pieces yt-dlp names "name.f137.mp4"
+_UNFINISHED = re.compile(r"\.(part|ytdl|temp|tmp)$|\.f\d+(-[\w.]+)?\.[A-Za-z0-9]+$", re.I)
+
+
+def run_into_free_names(o: dict, run):
+    """run(options) so that a download never overwrites a file and is never skipped as "already downloaded".
+    yt-dlp works in a fresh hidden sub-folder of the destination; afterwards every finished file is moved into the
+    destination under a free name: 'view.mp4', 'view (1).mp4', 'view (2).mp4' ... Files that were already there stay
+    untouched. A download that fails half way still delivers the files it finished. Returns run's result."""
+    tmpl = o.get("outtmpl")
+    if not isinstance(tmpl, str):
+        return run(o)
+    dest, base = os.path.dirname(tmpl), os.path.basename(tmpl)
+    try:                                                         # leftovers of a crashed or killed download (older than a day)
+        for d in os.listdir(dest):
+            q = os.path.join(dest, d)
+            if d.startswith(".vdl_") and os.path.isdir(q) and time.time() - os.path.getmtime(q) > 86400:
+                shutil.rmtree(q, ignore_errors=True)
+    except OSError:
+        pass
+    tmp = os.path.join(dest, ".vdl_" + os.urandom(4).hex())
+    os.makedirs(tmp)
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetFileAttributesW(tmp, 2)        # hidden (Windows only; harmless elsewhere)
+    except Exception:
+        pass
+    o2 = dict(o)
+    o2["outtmpl"] = os.path.join(tmp, base)
+    try:
+        return run(o2)
+    finally:
+        for f in sorted(os.listdir(tmp)):
+            src = os.path.join(tmp, f)
+            try:
+                if _UNFINISHED.search(f):
+                    os.remove(src)
+                else:
+                    stem, ext = os.path.splitext(f)
+                    shutil.move(src, unique_path(dest, stem, ext))
+            except OSError:
+                pass                                             # a file that cannot be moved stays in the hidden folder
+        try:
+            os.rmdir(tmp)                                        # only succeeds when nothing was left behind
+        except OSError:
+            pass
+
+
 def fmt_hms(sec: float) -> str:
     sec = int(sec)
     return f"{sec // 3600}:{sec % 3600 // 60:02d}:{sec % 60:02d}"
+
+
+def room_expected_seconds(res: dict) -> float:
+    """The length the recorded file should have: the pieces we got plus the pieces the playlist dropped before we could
+    fetch them (their time is a gap in the file: found 2026-11-20, 4 gaps of 2 s made a 5:20 recording 5:28 long)."""
+    n = res.get("segments") or 0
+    return res.get("seconds", 0.0) + ((res.get("skipped") or 0) * res.get("seconds", 0.0) / n if n else 0.0)
 
 
 class RoomRecorder:
@@ -1349,7 +1909,8 @@ class RoomRecorder:
     stream may simply stop with no marker - `idle_end` seconds without a new segment."""
 
     def __init__(self, playlist, out_path, stop, log=None, progress=None, fetch=None,
-                 workers=8, poll=4.0, idle_end=180.0, retries=5, sleep=None):
+                 workers=8, poll=4.0, idle_end=180.0, retries=5, sleep=None,
+                 refresh=None, refresh_every=0.0, refresh_stale=45.0, refresh_timeout=25.0):
         self.playlist, self.out, self.stop = playlist, out_path, stop
         self.log = log or (lambda m: None)
         self.progress = progress or (lambda n, secs, failed: None)
@@ -1357,6 +1918,65 @@ class RoomRecorder:
         self.workers, self.poll, self.idle_end, self.retries = workers, poll, idle_end, retries
         self.sleep = sleep or (lambda s: self.stop.wait(s))
         self.master_checked = False
+        # A stream address that expires (VK: about 30 minutes - found 2026-11-20, a recording stopped at 32 minutes
+        # because the playlist stopped growing): refresh() returns a new playlist address. It is asked for every
+        # `refresh_every` seconds (0 = never on a timer) and whenever no new piece has arrived for `refresh_stale` seconds.
+        self.refresh, self.refresh_every, self.refresh_stale = refresh, refresh_every, refresh_stale
+        self.refresh_timeout = refresh_timeout   # a slow answer of the platform must not freeze the recording loop
+        self.over = False                      # refresh() said the broadcast is over (StreamOver) twice in a row
+        self._over_count = 0
+        self._resync = False                   # a renewed address may number its pieces differently
+        self._seen = deque(maxlen=600)         # paths of the pieces already taken (a renewed address repeats them)
+
+    def _call_refresh(self):
+        """refresh() in a helper thread: wait at most `refresh_timeout` seconds (and not after Stop), so a slow platform
+        cannot hold the loop for minutes while the playlist moves on (found by the B927 review)."""
+        box = {}
+
+        def run():
+            try:
+                box["v"] = self.refresh()
+            except BaseException as e:
+                box["e"] = e
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+        end = time.time() + self.refresh_timeout
+        while t.is_alive() and time.time() < end and not self.stop.is_set():
+            t.join(0.3)
+        if t.is_alive():
+            raise TimeoutError("no answer in time")
+        if "e" in box:
+            raise box["e"]
+        return box.get("v")
+
+    def _renew(self, why):
+        try:
+            new = self._call_refresh()
+        except StreamOver:                     # the platform shows the broadcast as finished (asked twice: a pause is not the end)
+            self._over_count += 1
+            if self._over_count >= 2:
+                self.over = True
+                self.log("   The broadcast has ended")
+            else:
+                self.log("   The platform says the broadcast is not live (checking again)")
+            return False
+        except Exception as e:                 # a failed renewal never stops the recording
+            self.log(f"   Could not renew the stream address ({why}): {clean(e)[:100]}")
+            return False
+        if not new:
+            self._over_count = 0               # "no usable address now" is not a second "finished" answer
+            return False
+        self.playlist, self.master_checked = new, False
+        self._over_count, self._resync = 0, True
+        self.log(f"   Stream address renewed ({why})")
+        return True
+
+    def _poll_for(self, piece_seconds):
+        """How long to wait before asking for the playlist again: short pieces (a school's live stream has 2-second pieces and
+        a window of only a few of them) need a quicker look than the default, or pieces drop out of the window unseen."""
+        if piece_seconds and piece_seconds > 0:
+            return min(self.poll, max(0.5, piece_seconds * 0.5))
+        return self.poll
 
     @staticmethod
     def _net(url):
@@ -1367,6 +1987,8 @@ class RoomRecorder:
 
     def _segment(self, url):
         for attempt in range(self.retries):
+            if self.stop.is_set():                              # Stop must not wait for a dead network
+                return None
             try:
                 return self.fetch(url)
             except Exception:
@@ -1376,9 +1998,9 @@ class RoomRecorder:
 
     def run(self) -> dict:
         """Returns {'segments','seconds','failed','reason'}; reason is one of
-        'endlist', 'stopped', 'stalled', 'disk' (the file could not be written: disk full,
+        'endlist', 'ended' (refresh() reported StreamOver), 'stopped', 'stalled', 'disk' (the file could not be written: disk full,
         folder gone)."""
-        r = {"segments": 0, "seconds": 0.0, "failed": 0, "reason": "stalled"}
+        r = {"segments": 0, "seconds": 0.0, "failed": 0, "skipped": 0, "reason": "stalled"}
         try:
             self._run(r)
         except OSError as e:
@@ -1391,12 +2013,20 @@ class RoomRecorder:
         secs = 0.0
         nxt = None                          # number of the next segment to download
         todo = deque()
-        last_growth = last_ok = time.time()
+        last_growth = last_ok = last_refresh = time.time()
+        gap = self.refresh_stale                # the wait between "no new pieces" renewals grows: 45 s, 90 s, 180 s
+        piece = 0.0                             # seconds of the newest piece in the playlist
         reason = "stalled"
         with open(self.out, "wb") as f, ThreadPoolExecutor(self.workers) as pool:
             while True:
                 if self.stop.is_set():
                     reason = "stopped"; break
+                if self.refresh:
+                    now = time.time()
+                    if self.refresh_every and now - last_refresh >= self.refresh_every:
+                        last_refresh = now; self._renew("before it expires")
+                    elif now - last_growth >= self.refresh_stale and now - last_refresh >= gap:
+                        last_refresh = now; self._renew("no new pieces"); gap = min(gap * 2, 180.0)
                 endlist = False
                 try:
                     text = self.fetch(self.playlist).decode("utf-8", "replace")
@@ -1409,7 +2039,18 @@ class RoomRecorder:
                             text = self.fetch(self.playlist).decode("utf-8", "replace")
                     pl = hls_parse(text, self.playlist)
                     last_ok = time.time()
+                    if pl.get("encrypted"):
+                        raise RoomError("room_err_enc")
                     segs = pl["segments"]
+                    if segs and segs[-1][2]:
+                        piece = segs[-1][2]
+                    if self._resync and segs:                   # right after a renewal: the numbering may have restarted
+                        self._resync = False
+                        if nxt is not None and segs[-1][0] < nxt:
+                            self.log("   The renewed playlist numbers its pieces from the start again: continuing by address")
+                            segs = [sg for sg in segs if urllib.parse.urlparse(sg[1]).path not in self._seen]
+                            if segs:
+                                nxt = segs[0][0]
                     if nxt is None and segs:
                         nxt = segs[0][0]
                         if pl["init"]:
@@ -1418,10 +2059,15 @@ class RoomRecorder:
                     if nxt is not None:
                         fresh = [s for s in segs if s[0] >= nxt]
                         if fresh and fresh[0][0] > nxt:
+                            r["skipped"] += fresh[0][0] - nxt          # pieces the playlist dropped before we got them
                             self.log(f"   Playlist moved on: {fresh[0][0] - nxt} segment(s) skipped")
                         if fresh:
-                            todo.extend(fresh); nxt = fresh[-1][0] + 1; last_growth = time.time()
+                            todo.extend(fresh); nxt = fresh[-1][0] + 1; last_growth = time.time(); gap = self.refresh_stale
+                            for sg in fresh:
+                                self._seen.append(urllib.parse.urlparse(sg[1]).path)
                     endlist = pl["endlist"]
+                except RoomError:
+                    raise
                 except Exception as e:
                     if time.time() - last_ok > self.idle_end:
                         self.log(f"   Playlist unreachable for {int(self.idle_end)} s: {clean(e)[:100]}")
@@ -1433,6 +2079,8 @@ class RoomRecorder:
                     futs = [pool.submit(self._segment, s[1]) for s in batch]
                     for s, fu in zip(batch, futs):          # written strictly in order
                         data = fu.result()
+                        if data is None and self.stop.is_set():
+                            continue                                # cut short by Stop: not a real failure
                         if data is None:
                             failed += 1; r["failed"] = failed
                             self.log(f"   Segment {s[0]} could not be downloaded - skipped")
@@ -1445,9 +2093,11 @@ class RoomRecorder:
                     reason = "stopped"; break
                 if endlist and not todo:
                     reason = "endlist"; break
+                if self.over and not todo:         # the last pieces of the finished broadcast are in
+                    reason = "ended"; break
                 if time.time() - last_growth > self.idle_end:
                     reason = "stalled"; break
-                self.sleep(self.poll)
+                self.sleep(self._poll_for(piece))
         r.update(segments=done, seconds=secs, failed=failed, reason=reason)
 
 
@@ -1457,7 +2107,7 @@ class RoomRecorder:
 # ══════════════════════════════════════════════════════════════
 T = {
 "en": dict(
-    app_title="Universal Video Downloader", ready="Ready", attention="Needs attention",
+    app_title="Universal Video Downloader", ready="All OK", attention="Needs attention",
     lang_switch="Русский",
     step1="1.  Copy the video's address in your browser, then press",
     paste="Paste link", clear="Clear",
@@ -1484,16 +2134,23 @@ T = {
     st_converted="Done! The MP4 file is saved next to the original.",
     st_conv_failed="The conversion did not work. The original file is untouched.",
     nav_room="Record a webinar room", room_title="Record a webinar room",
-    room_help="Paste the link of a webinar room (the address contains /room/). The program "
-              "waits until the broadcast starts, records it, and when you press “Stop and "
-              "save” — or the broadcast ends — makes an MP4 video. Keep this window open and "
-              "do not let the computer go to sleep (do not close the laptop lid) until it "
-              "says Done. A 2-hour webinar needs about 8 GB of free disk space. While the "
-              "program is only waiting, “Stop and save” simply cancels.",
+    room_help="Paste the link of a webinar room (the address contains /room/ or /pl/webinar/show) and "
+              "press “Start recording” BEFORE the webinar begins. If the broadcast is already on air, its "
+              "beginning cannot be recorded live; for VK the program then waits after the end (up to 4 hours) "
+              "for VK's own full recording. Keep this window open and do not let the computer go to sleep "
+              "until it says Done (plugged in, laptop lid open). Plan about 1 GB of free disk space per hour. Before the broadcast starts, "
+              "“Stop and save” cancels; later it saves what is recorded.",
     room_start="Start recording", room_stop="Stop and save", recording="Recording...",
     st_room_signin="Entering the webinar room...",
     st_room_wait="Waiting for the broadcast to begin. Keep this window open.",
     st_room_rec="Recording the broadcast...  recorded so far: {t} (hours:minutes:seconds)",
+    st_room_rec_late="Recording...  recorded so far: {t} (hours:minutes:seconds). The broadcast was already on air "
+                     "when the recording started, so its beginning is not in this recording. For VK, the program will try to fetch the full recording after the end.",
+    st_room_wait_full="The broadcast has ended. Waiting for VK's full recording, so that the whole webinar is in the video. Waited: {w}, at most {r} left. You may do other things; keep the laptop plugged in and the lid and this window open. “Stop and save” keeps what is recorded.",
+    st_room_getting_full="VK's full recording was found. Downloading it now. Downloaded so far: {t} "
+                         "(hours:minutes:seconds). The beginning of the webinar is included. Keep this window open.",
+    st_room_checking="Checking the downloaded full recording... For a long video this can take a few minutes. "
+                     "Keep this window open.",
     st_room_stopping="Stopping — saving what was recorded...",
     st_room_converting="Making the MP4... For a long recording this can take a few minutes. "
                        "Do not close the window.",
@@ -1501,23 +2158,46 @@ T = {
     st_room_nothing="Nothing could be recorded from this room. The broadcast may not have "
                     "started yet. Try again when the webinar is on air.",
     st_room_done="Done! The recording ({t}) is saved as an MP4 in your download folder.",
+    st_room_done_late="Saved, but not complete: the beginning is missing, because the broadcast was already on air when the "
+                      "recording started. The recording ({t}) is saved as an MP4 in your download folder.",
+    st_room_done_late_nofull="Saved, but not complete: the beginning is missing, VK did not publish its full recording. The recording ({t}) is saved as an MP4. "
+                             "Later your helper can download the full video from VK (paste its address on the main screen).",
     st_room_done_kept="Done! The recording ({t}) is saved as an MP4 in your download folder. "
                       "The unprocessed copy (.ts) was kept too; delete it once the MP4 plays well.",
-    st_room_done_skipped="Done, but {n} short pieces could not be downloaded, so the video "
+    st_room_done_skipped="Done, but some short pieces could not be downloaded (number: {n}), so the video "
                          "may jump. The MP4 is in your download folder. The unprocessed "
                          "copy (.ts) was kept too.",
     st_room_done_check="Done, but the length of the video ({t}) does not match what was "
                        "downloaded. Check that the MP4 plays to the end. The unprocessed "
                        "copy (.ts) was kept too.",
-    st_room_done_stalled="The broadcast sent no video for 3 minutes, so the recording ended "
+    st_room_done_stalled="The broadcast sent no video for {m} minutes, so the recording ended "
                          "there. The MP4 ({t}) is in your download folder. The unprocessed "
                          "copy (.ts) was kept too.",
+    dl_close_title="Download in progress",
+    dl_close_ask="The program is still working (downloading or making a video). If you close it now, the work stops and the video will not be finished. Close anyway?",
     room_close_title="Recording in progress",
+    room_stop_wait_ask="The program is waiting for VK's full recording. If you stop now, the beginning of the webinar will be missing from the video. Stop anyway?",
     room_close_ask="A recording is running. If you close the program now, the recording "
-                   "stops and no MP4 is made. Close anyway?",
+                   "stops and no MP4 is made (VK's full recording is not fetched either). The unprocessed copy (.ts) stays in "
+                   "your download folder; “Convert to MP4” can turn it into a video later. Close anyway?",
     room_err_link="This link does not look like a webinar. The address must contain /room/ (a webinar room) or /pl/webinar/show (a school's own webinar page). Copy the address of the page where the webinar is shown.",
-    room_err_gc_page="The webinar page could not be opened. Log in to the school first (“Log in to websites”), then try again.",
-    room_err_gc_nostream="This webinar page holds no broadcast address. Check that you are logged in to the school and that this is the page where the webinar is shown.",
+    room_err_gc_page="The webinar page could not be opened. Log in to the school first (“Log in to websites”), then try again. If the school has no password, press the button “The school asks for a name and e-mail?” on this page.",
+    room_err_gc_nostream="This webinar page holds no broadcast address: the program is probably not logged in to the school. If the school has no password, use a login file (“Log in to websites”, three steps), then try again.",
+    room_err_gc_socket="Could not connect to the school's webinar channel. Wait one minute, then press “Start recording” again.",
+    room_err_gc_info="The school did not give the video list for this webinar. Wait a minute and try again. If it keeps failing, tell the person who helps you.",
+    enter_btn="The school asks for a name and e-mail?  Enter the room here...",
+    enter_title="Enter the webinar room",
+    enter_help="Use this only if the webinar page shows a small form (your name and e-mail and a button “Enter the room”) and the school has no password. The program fills in that form for you, in the same way as your browser does. Your name and e-mail are sent only to this school and are not saved by the program.",
+    enter_site="Web address of the webinar page (the one you paste for recording):",
+    enter_name="Your name (as in the school's form):",
+    enter_email="Your e-mail (the one you registered with):",
+    enter_consent="I agree that the program sends my name and e-mail to the school, as the school's own form does.",
+    enter_go="Enter the room",
+    enter_busy="Entering the room - this can take up to about a minute. Please wait...",
+    enter_err_empty="Fill in the web address (it starts with https://), your name and your e-mail, and tick the box.",
+    enter_err_form="This page shows no entry form. If you are already inside in your browser, use a login file instead (“Log in to websites”: add-on, log in, “Export”).",
+    enter_err_fail="The school did not let the program in.",
+    enter_ok="Entered the room of {host}. Now press “Start recording”.",
     room_err_signin="The room did not let the program in. Open the link in your browser to "
                     "check that it still works. If it does not, ask the school for a new link.",
     room_err_closed="The room still shows its entry form. The link may be old or "
@@ -1527,10 +2207,15 @@ T = {
                      "“Start recording” again.",
     room_err_type="This room plays its video from a source the program cannot record yet. "
                   "Tell the person who helps you and give them this code: {vt}",
+    room_err_vk="The room plays its video from VK, but the program could not get the video address "
+                "from VK. The broadcast may not be available yet, or VK may be asking for a check. "
+                "Wait five minutes and press “Start recording” again. If it fails again, tell the "
+                "person who helps you.",
+    room_err_enc="This broadcast is encrypted (copy-protected). The program cannot record it and does not try to get around the protection. Watch it on the website.",
     room_err_stream="The room gave a link to the video that the program could not open. "
                     "Tell the person who helps you and say the video link did not open.",
     room_err_disk="The recording could not be written. The disk may be full. Free some "
-                  "space (a 2-hour webinar needs about 8 GB), then press “Start recording” again.",
+                  "space (about 1 GB per hour of webinar), then press “Start recording” again.",
     room_err_disk_part="The disk is full or the folder cannot be written. What was recorded "
                        "so far is in the file “{name}” in your download folder. Free some "
                        "space, then use “Convert to MP4” on that file.",
@@ -1588,7 +2273,7 @@ T = {
                "and copy that address.",
     scan_found="Found {n} videos. Untick any you don't want, then press the green button. They will be saved in: {folder}.",
     scan_reading="Reading lesson {i} of {n}...",
-    room_low_disk="Only {gb} GB are free on the drive where videos are saved. A webinar of two hours needs about 8 GB (the recording, and then the MP4). Record anyway?",
+    room_low_disk="Only {gb} GB are free on the drive where videos are saved. That is enough for about {h} h of webinar (the recording, and then the MP4). If the webinar is longer, press No and free some space. Record anyway?",
     no_page="First copy the page's address, then press “Paste link”.",
     nothing_ticked="Tick at least one video first (click on its line).",
     ck_title="Log in to websites",
@@ -1654,7 +2339,7 @@ T = {
     sys_ok="working", sys_missing="missing", sys_none="none",
 ),
 "ru": dict(
-    app_title="Универсальный загрузчик видео", ready="Готово", attention="Нужна помощь",
+    app_title="Универсальный загрузчик видео", ready="Исправно", attention="Нужна помощь",
     lang_switch="English",
     step1="1.  Скопируйте адрес видео в браузере и нажмите",
     paste="Вставить ссылку", clear="Очистить",
@@ -1681,17 +2366,23 @@ T = {
     st_converted="Готово! Файл MP4 сохранён рядом с исходным.",
     st_conv_failed="Преобразовать не получилось. Исходный файл не тронут.",
     nav_room="Записать вебинарную комнату", room_title="Записать вебинарную комнату",
-    room_help="Вставьте ссылку на вебинарную комнату (в адресе есть /room/). Программа "
-              "дождётся начала трансляции, запишет её, а когда вы нажмёте «Остановить и "
-              "сохранить» или трансляция закончится, сделает видео MP4. Не закрывайте окно "
-              "и не давайте компьютеру заснуть (не закрывайте крышку ноутбука), пока не "
-              "появится «Готово». Для двухчасового вебинара нужно около 8 ГБ свободного "
-              "места на диске. Пока программа только ждёт, кнопка «Остановить и сохранить» "
-              "просто отменяет ожидание.",
+    room_help="Вставьте ссылку на вебинарную комнату (в адресе есть /room/ или /pl/webinar/show) и "
+              "нажмите «Начать запись» ДО начала вебинара. Если эфир уже идёт, начало вживую записать "
+              "нельзя; для VK программа тогда после конца эфира ждёт (не дольше 4 часов) полную запись "
+              "от самого VK. Не закрывайте окно и не давайте компьютеру заснуть (ноутбук включите в розетку, крышку не закрывайте), пока не появится "
+              "«Готово». На каждый час вебинара нужно около 1 ГБ места на диске. Пока эфир не начался, кнопка "
+              "«Остановить и сохранить» отменяет запись; потом она сохраняет записанное.",
     room_start="Начать запись", room_stop="Остановить и сохранить", recording="Запись...",
     st_room_signin="Захожу в комнату вебинара...",
     st_room_wait="Жду начала трансляции. Не закрывайте это окно.",
     st_room_rec="Идёт запись трансляции...  записано: {t} (часы:минуты:секунды)",
+    st_room_rec_late="Идёт запись...  записано: {t} (часы:минуты:секунды). Эфир уже шёл, когда запись "
+                     "началась, поэтому начала вебинара в записи не будет. Для VK программа сама попробует скачать полную запись после конца эфира.",
+    st_room_wait_full="Эфир закончился. Жду полную запись от VK, чтобы в видео был весь вебинар. Прошло: {w}, осталось не больше {r}. Можно заниматься другими делами; ноутбук в розетке, крышка и это окно открыты. «Остановить и сохранить» оставит записанное.",
+    st_room_getting_full="Полная запись от VK найдена. Скачиваю её. Скачано: {t} (часы:минуты:секунды). "
+                         "Начало вебинара в ней есть. Не закрывайте окно.",
+    st_room_checking="Проверяю скачанную полную запись... Для длинного видео это может занять несколько "
+                     "минут. Не закрывайте окно.",
     st_room_stopping="Останавливаю — сохраняю записанное...",
     st_room_converting="Делаю MP4... Для длинной записи это может занять несколько минут. "
                        "Не закрывайте окно.",
@@ -1699,23 +2390,46 @@ T = {
     st_room_nothing="Из этой комнаты ничего не удалось записать. Возможно, трансляция ещё не "
                     "началась. Попробуйте ещё раз, когда вебинар идёт.",
     st_room_done="Готово! Запись ({t}) сохранена в MP4 в вашей папке загрузок.",
+    st_room_done_late="Запись сохранена, но неполная: нет начала вебинара, потому что эфир уже шёл, когда запись началась. "
+                      "Запись ({t}) сохранена в MP4 в вашей папке загрузок.",
+    st_room_done_late_nofull="Запись сохранена, но неполная: нет начала вебинара, VK не опубликовал полную запись. Запись ({t}) сохранена в MP4. "
+                             "Полное видео можно позже скачать с VK: попросите помощника найти его адрес.",
     st_room_done_kept="Готово! Запись ({t}) сохранена в MP4 в вашей папке загрузок. Исходная "
                       "копия (.ts) тоже оставлена; удалите её, когда убедитесь, что MP4 "
                       "воспроизводится.",
-    st_room_done_skipped="Готово, но {n} коротких фрагментов не удалось загрузить, поэтому в "
-                         "видео могут быть скачки. Файл MP4 лежит в папке загрузок. Исходная "
+    st_room_done_skipped="Готово, но несколько коротких фрагментов не удалось загрузить (их число: {n}), "
+                         "поэтому в видео могут быть скачки. Файл MP4 лежит в папке загрузок. Исходная "
                          "копия (.ts) тоже оставлена.",
     st_room_done_check="Готово, но длина видео ({t}) не совпадает с загруженным. Проверьте, "
                        "что MP4 воспроизводится до конца. Исходная копия (.ts) тоже оставлена.",
-    st_room_done_stalled="Трансляция не передавала видео 3 минуты, поэтому запись закончена "
+    st_room_done_stalled="Трансляция не передавала видео {m} мин., поэтому запись закончена "
                          "на этом месте. Файл MP4 ({t}) лежит в папке загрузок. Исходная "
                          "копия (.ts) тоже оставлена.",
+    dl_close_title="Идёт загрузка",
+    dl_close_ask="Программа ещё работает (скачивает или делает видео). Если закрыть её сейчас, работа остановится, и видео не будет закончено. Всё равно закрыть?",
     room_close_title="Идёт запись",
-    room_close_ask="Идёт запись. Если закрыть программу сейчас, запись остановится и MP4 не "
-                   "будет создан. Всё равно закрыть?",
+    room_stop_wait_ask="Программа ждёт полную запись от VK. Если остановить её сейчас, в видео не будет начала вебинара. Всё равно остановить?",
+    room_close_ask="Идёт запись. Если закрыть программу сейчас, запись остановится, и файл MP4 "
+                   "не будет создан (полная запись от VK тоже не скачается). Исходная копия (.ts) останется в папке загрузок; позже её можно "
+                   "превратить в видео кнопкой «Сделать MP4». Всё равно закрыть?",
     room_err_link="Эта ссылка не похожа на вебинар. В адресе должно быть /room/ (вебинарная комната) или /pl/webinar/show (страница вебинара школы). Скопируйте адрес страницы, где показывают вебинар.",
-    room_err_gc_page="Страницу вебинара не удалось открыть. Сначала войдите на сайт школы («Вход на сайты») и повторите.",
-    room_err_gc_nostream="На странице вебинара нет адреса трансляции. Проверьте, что вы вошли на сайт школы и что это страница, где показывают вебинар.",
+    room_err_gc_page="Страницу вебинара не удалось открыть. Сначала войдите на сайт школы («Вход на сайты») и повторите. Если у школы нет пароля, нажмите на этой странице кнопку «Школа просит имя и электронную почту?».",
+    room_err_gc_nostream="На странице вебинара нет адреса трансляции: программа, скорее всего, не вошла на сайт школы. Если у школы нет пароля, используйте файл входа («Вход на сайты», три шага) и повторите.",
+    room_err_gc_socket="Не удалось подключиться к каналу вебинара школы. Подождите минуту и снова нажмите «Начать запись».",
+    room_err_gc_info="Школа не выдала список видео этого вебинара. Подождите минуту и попробуйте ещё раз. Если не получится, сообщите тому, кто вам помогает.",
+    enter_btn="Школа просит имя и электронную почту?  Войти в комнату здесь...",
+    enter_title="Вход в комнату вебинара",
+    enter_help="Нужно, только если страница вебинара показывает небольшую форму (имя, электронная почта и кнопка «Войти в комнату»), а пароля у школы нет. Программа заполнит эту форму за вас, так же, как это делает браузер. Ваше имя и почта отправляются только этой школе, программа их не сохраняет.",
+    enter_site="Адрес страницы вебинара (тот, который вы вставляете для записи):",
+    enter_name="Ваше имя (как в форме школы):",
+    enter_email="Ваша электронная почта (с которой вы регистрировались):",
+    enter_consent="Я согласен, что программа отправит моё имя и почту школе, как это делает форма самой школы.",
+    enter_go="Войти в комнату",
+    enter_busy="Выполняется вход в комнату — это может занять до минуты. Подождите...",
+    enter_err_empty="Заполните адрес (он начинается с https://), имя и электронную почту и поставьте галочку.",
+    enter_err_form="На этой странице нет формы входа. Если в браузере вы уже внутри, используйте файл входа («Вход на сайты»: дополнение, вход на сайт, «Export»).",
+    enter_err_fail="Школа не пустила программу.",
+    enter_ok="Вход в комнату {host} выполнен. Теперь нажмите «Начать запись».",
     room_err_signin="Комната не пустила программу. Откройте ссылку в браузере и проверьте, "
                     "что она ещё работает. Если нет — попросите у школы новую ссылку.",
     room_err_closed="Комната всё ещё показывает форму входа. Возможно, ссылка устарела или "
@@ -1726,10 +2440,15 @@ T = {
                      "нажмите «Начать запись».",
     room_err_type="Эта комната показывает видео из источника, который программа пока не умеет "
                   "записывать. Сообщите тому, кто вам помогает, и назовите ему этот код: {vt}",
+    room_err_vk="Комната показывает видео из VK, но программа не смогла получить от VK адрес видео. "
+                "Возможно, видео ещё недоступно, или VK просит пройти проверку. Подождите пять минут "
+                "и снова нажмите «Начать запись». Если снова не получится, сообщите тому, кто вам "
+                "помогает.",
+    room_err_enc="Эта трансляция зашифрована (защищена от копирования). Программа не может её записать и не пытается обойти защиту. Смотрите её на сайте.",
     room_err_stream="Комната дала ссылку на видео, которую программа не смогла открыть. "
                     "Сообщите тому, кто вам помогает, что ссылка на видео не открылась.",
     room_err_disk="Не удалось записать файл. Возможно, на диске нет места. Освободите место "
-                  "(для двухчасового вебинара нужно около 8 ГБ) и снова нажмите «Начать запись».",
+                  "(около 1 ГБ на каждый час вебинара) и снова нажмите «Начать запись».",
     room_err_disk_part="На диске нет места или в папку нельзя записать. Всё записанное до этого "
                        "лежит в файле «{name}» в папке загрузок. Освободите место и "
                        "воспользуйтесь кнопкой «Сделать MP4» для этого файла.",
@@ -1789,7 +2508,7 @@ T = {
                "скопируйте его адрес.",
     scan_found="Найдено видео: {n}. Снимите отметку с ненужных и нажмите зелёную кнопку. Они будут сохранены в папку: {folder}.",
     scan_reading="Читаю урок {i} из {n}...",
-    room_low_disk="На диске, куда сохраняются видео, свободно только {gb} ГБ. Для вебинара на два часа нужно около 8 ГБ (запись, а потом MP4). Всё равно записывать?",
+    room_low_disk="На диске, куда сохраняются видео, свободно только {gb} ГБ. Этого хватит примерно на {h} ч вебинара (запись, а потом MP4). Если вебинар длиннее, нажмите «Нет» и освободите место. Всё равно записывать?",
     no_page="Сначала скопируйте адрес страницы и нажмите «Вставить ссылку».",
     nothing_ticked="Сначала отметьте хотя бы одно видео (щёлкните по строке).",
     ck_title="Вход на сайты",
@@ -1952,9 +2671,10 @@ class App(tk.Tk):
 
         s = self.winfo_fpixels("1i") / 96.0          # 1.0 at 100 %, 1.5 at 150 %
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        w, h = min(int(980 * s), sw - 40), min(int(760 * s), sh - 90)
+        # 840 high: the Russian "Record a webinar room" page needs about 780 px at this width (measured 2026-11-20)
+        w, h = min(int(1000 * s), sw - 40), min(int(840 * s), sh - 90)
         self.geometry(f"{w}x{h}+{max(0, (sw - w) // 2)}+{max(0, (sh - h) // 3)}")
-        self.minsize(min(int(820 * s), sw - 40), min(int(730 * s), sh - 90))
+        self.minsize(min(int(820 * s), sw - 40), min(int(840 * s), sh - 90))
         self.configure(bg=C["bg"])
 
         # Window / taskbar icon
@@ -1991,6 +2711,12 @@ class App(tk.Tk):
         self._room_stop = threading.Event()
         self._room_shown = 0.0              # when the recording time was last shown
         self._done_note = None              # final message of a room recording (see _conv_done)
+        self._late_start = False            # the room was already on air when the recording was started
+        self._room_busy = False             # the room worker is alive (waiting, recording, fetching, checking, converting)
+        self._waiting_full = False          # waiting for VK to publish the full recording
+        self._fetching_full = False         # VK's full recording is being downloaded
+        self._wait_nofull = False           # waited for VK's full recording and it never came
+        self._room_idle_min = 3             # minutes without a new piece after which a recording ends
         self._yt_nocookie = tk.BooleanVar(value=True)
         self._prog = tk.DoubleVar()
         self._ssl_mode = "auto"
@@ -2012,11 +2738,25 @@ class App(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._close)
 
     def _close(self):
-        if self._room_active or self._done_note:           # a webinar room is being recorded / made into MP4
+        if self._room_active or self._done_note or self._room_busy:     # a webinar room is being recorded / made into MP4
             if not messagebox.askyesno(self.t("room_close_title"), self.t("room_close_ask"),
                                        icon="warning", default="no", parent=self):
                 return
             self._room_stop.set()
+        elif self._running or self._scanning:                          # an ordinary download / scan / conversion
+            if not messagebox.askyesno(self.t("dl_close_title"), self.t("dl_close_ask"),
+                                       icon="warning", default="no", parent=self):
+                return
+        p = getattr(self, "_conv_proc", None)                          # a running MP4 conversion would go on without a window
+        if p is not None and p.poll() is None:
+            try:
+                p.kill()
+            except OSError:
+                pass
+            try:
+                os.remove(getattr(self, "_conv_tmp", "") or "")
+            except OSError:
+                pass
         self._watching = False; self.destroy()
 
     def t(self, key, **kw):
@@ -2108,10 +2848,14 @@ class App(tk.Tk):
                  ).pack(side=tk.LEFT, padx=(16, 2), pady=10)
         for key, page in (("nav_scan", "scan"), ("nav_room", "room"),
                           ("nav_cookies", "cookies"), ("nav_details", "details")):
-            l = tk.Label(f, text=self.t(key), font=(UI, 12, "underline"), fg=C["blue"],
-                         bg=C["panel2"], cursor="hand2", takefocus=1, highlightthickness=2,
-                         highlightbackground=C["panel2"], highlightcolor=C["blue"])
-            l.pack(side=tk.LEFT, padx=5)
+            l = tk.Label(f, text=self.t(key), font=(UI, 12), fg=C["blue"], bg="#FFFFFF",
+                         cursor="hand2", takefocus=1, highlightthickness=2, padx=6, pady=3,
+                         highlightbackground=C["btn_border"], highlightcolor=C["blue"])
+            l.pack(side=tk.LEFT, padx=4, pady=6)
+            def _on(_, w=l): w.config(bg=C["soft_blue"], highlightbackground=C["blue"])
+            def _off(_, w=l): w.config(bg="#FFFFFF", highlightbackground=C["btn_border"])
+            for ev, fn in (("<Enter>", _on), ("<Leave>", _off), ("<FocusIn>", _on), ("<FocusOut>", _off)):
+                l.bind(ev, fn)
             l.bind("<Button-1>", lambda _, pg=page: self._show(pg))
             for k in ("<Return>", "<space>"):               # Tab reaches the link, Enter / Space opens it
                 l.bind(k, lambda _, pg=page: self._show(pg))
@@ -2222,7 +2966,7 @@ class App(tk.Tk):
         self._entry(row, self._room_var, self._start_room
                     ).grid(row=0, column=1, sticky="nsew", padx=(10, 0))
         self._label(p, self.t("page_video_only"), 13, fg=C["muted"], wrap=True
-                    ).grid(row=5, column=0, sticky="ew", pady=(14, 0))
+                    ).grid(row=6, column=0, sticky="ew", pady=(14, 0))
         self._room_btn = _btn(p, "●   " + self.t("room_start"), self._start_room,
                               bg=C["green"], font=(UI, 20, "bold"))
         self._room_btn.grid(row=3, column=0, sticky="ew", pady=(14, 0), ipady=10)
@@ -2230,6 +2974,8 @@ class App(tk.Tk):
                                    bg=C["disabled"], font=(UI, 16, "bold"))
         self._room_stop_btn.config(state=tk.DISABLED)
         self._room_stop_btn.grid(row=4, column=0, sticky="ew", pady=(10, 0), ipady=6)
+        _btn(p, self.t("enter_btn"), self._open_enter_room, bg=C["panel2"], fg=C["text"],
+             font=(UI, 12)).grid(row=5, column=0, sticky="w", pady=(14, 0), ipadx=12, ipady=4)
         return p
 
     def _room_buttons(self, busy):
@@ -2393,8 +3139,9 @@ class App(tk.Tk):
                      highlightbackground=C["border"])
         w.grid_columnconfigure(0, weight=1)
         self._st_main = self._label(w, "", 16, True, bg=C["panel"], wrap=True)
-        self._st_main.config(height=2, anchor=tk.NW)      # always two lines high: the panel does not jump
+        self._st_main.config(height=2, anchor=tk.NW)      # two lines high; a longer message shrinks its type and grows (_fit_status)
         self._st_main.grid(row=0, column=0, sticky="ew")
+        self._st_main.bind("<Configure>", lambda e: self._fit_status(), add="+")
         self._st_sub = self._label(w, "", 13, fg=C["muted"], bg=C["panel"])
         self._st_sub.grid(row=1, column=0, sticky="ew", pady=(2, 0))
         self._st_btn = _btn(w, "", None, bg=C["blue"], font=(UI, 13, "bold"))
@@ -2422,6 +3169,7 @@ class App(tk.Tk):
         self._status_state = (kind, key, action, kw)
         icon = {"ok": "✓  ", "warn": "⚠  ", "err": "✗  "}.get(kind, "")
         self._st_main.config(text=icon + self.t(key, **kw), fg=C[self.STATUS_FG[kind]])
+        self._fit_status()
         self._st_sub.config(text=sub)
         if sub: self._st_sub.grid()             # no empty line when there is nothing to say
         else:   self._st_sub.grid_remove()
@@ -2431,6 +3179,36 @@ class App(tk.Tk):
             self._st_btn.grid()
         else:
             self._st_btn.grid_remove()
+
+    def _fit_status(self):
+        """A message must never be cut off: if it needs more than two lines at the normal size, use a smaller size first
+        (16 -> 14 -> 13 -> 12 pt) and, only if that is not enough, more lines. Short messages keep the calm two-line panel."""
+        lab = self._st_main
+        try:
+            import tkinter.font as tkfont
+            text = lab.cget("text")
+            width = max(100, (lab.winfo_width() if lab.winfo_width() > 60 else self.winfo_width() - 260) - 8)
+            best = None
+            for size, room in ((16, 2), (14, 3), (13, 3), (12, 5)):
+                f = tkfont.Font(family=UI, size=size, weight="bold")
+                lines = 0
+                for para in text.split("\n"):
+                    cur = ""
+                    n = 1
+                    for word in para.split(" "):
+                        trial = (cur + " " + word) if cur else word
+                        if cur and f.measure(trial) > width:
+                            n += 1; cur = word
+                        else:
+                            cur = trial
+                    lines += n
+                best = (size, max(2, lines))
+                if lines <= room:
+                    break
+            if (lab.cget("height"), lab.cget("font")) != (best[1], f"{UI} {best[0]} bold"):
+                lab.config(font=(UI, best[0], "bold"), height=best[1])
+        except Exception:
+            pass                                      # a measuring problem must never hide the message
 
     def _time_left(self, eta):
         if eta is None:
@@ -2684,6 +3462,113 @@ class App(tk.Tk):
         y = self.winfo_rooty() + max(0, (self.winfo_height() - d.winfo_reqheight()) // 3)
         d.geometry(f"+{x}+{y}")
         (e_mail if v_site.get() else e_site).focus_set()
+
+    def _open_enter_room(self):
+        """'Enter the room' for a school without a password: name + e-mail form (school_enter_room)."""
+        d = tk.Toplevel(self); d.title(self.t("enter_title"))
+        d.configure(bg=C["bg"], padx=26, pady=18); d.transient(self); d.grab_set()
+        d.resizable(False, False)
+        wrap = int(560 * self.winfo_fpixels("1i") / 96)
+        v_site, v_name, v_mail, v_ok = tk.StringVar(), tk.StringVar(), tk.StringVar(), tk.BooleanVar(value=False)
+        busy = [False]
+        u = self._room_var.get().strip()
+        if u.lower().startswith("https://"):
+            v_site.set(u)
+
+        def field(var):
+            cf = _cardf(d)
+            e = tk.Entry(cf, textvariable=var, font=(UI, 13), bg=C["panel"], fg=C["text"],
+                         insertbackground=C["text"], relief=tk.FLAT, bd=0, width=52)
+            e.pack(fill=tk.X, ipady=8, ipadx=8)
+            e.bind("<FocusIn>",  lambda _: cf.config(highlightbackground=C["blue"]))
+            e.bind("<FocusOut>", lambda _: cf.config(highlightbackground=C["border"]))
+            e.bind("<Return>",   lambda _: go())
+            self._entry_clip(e)
+            return cf, e
+
+        self._label(d, self.t("enter_title"), 16, True).pack(fill=tk.X)
+        tk.Label(d, text=self.t("enter_help"), font=(UI, 12), fg=C["muted"], bg=C["bg"],
+                 anchor=tk.W, justify=tk.LEFT, wraplength=wrap).pack(fill=tk.X, pady=(4, 10))
+        for key, var in (("enter_site", v_site), ("enter_name", v_name), ("enter_email", v_mail)):
+            self._label(d, self.t(key), 12, True).pack(fill=tk.X)
+            cf, e = field(var); cf.pack(fill=tk.X, pady=(2, 8))
+            if var is v_name: e_name = e
+            if var is v_site: e_site = e
+        tk.Checkbutton(d, text=self.t("enter_consent"), variable=v_ok, font=(UI, 12), wraplength=wrap,
+                       justify=tk.LEFT, bg=C["bg"], fg=C["text"], selectcolor=C["panel"],
+                       activebackground=C["bg"], activeforeground=C["text"],
+                       relief=tk.FLAT, bd=0, highlightthickness=0).pack(anchor=tk.W)
+        msg = tk.Label(d, text="", font=(UI, 12, "bold"), bg=C["bg"], fg=C["muted"],
+                       anchor=tk.W, justify=tk.LEFT, wraplength=wrap)
+        msg.pack(fill=tk.X, pady=(8, 4))
+        bar = tk.Frame(d, bg=C["bg"]); bar.pack(fill=tk.X, pady=(6, 0))
+        go_btn = _btn(bar, self.t("enter_go"), lambda: go(), bg=C["green"], font=(UI, 14, "bold"))
+        go_btn.pack(side=tk.LEFT, ipadx=22, ipady=6)
+        cancel_btn = _btn(bar, self.t("login_cancel"), lambda: close(), bg=C["panel2"],
+                          fg=C["text"], font=(UI, 12))
+        cancel_btn.pack(side=tk.RIGHT, ipadx=14, ipady=4)
+
+        def alive(): return d.winfo_exists()
+
+        def close():
+            if not busy[0]:
+                d.destroy()
+        d.protocol("WM_DELETE_WINDOW", close)
+        d.bind("<Escape>", lambda _: close())
+
+        def post(fn):
+            try: self.after(0, fn)
+            except Exception: pass
+
+        def go():
+            if busy[0]:
+                return
+            site, nm, mail = v_site.get().strip(), v_name.get().strip(), v_mail.get().strip()
+            if not (self._is_link(site) and nm and "@" in mail and v_ok.get()):
+                msg.config(text=self.t("enter_err_empty"), fg=C["red"]); return
+            busy[0] = True
+            msg.config(text=self.t("enter_busy"), fg=C["blue"])
+            _recolor(go_btn, C["disabled"]); go_btn.config(state=tk.DISABLED)
+            cancel_btn.config(state=tk.DISABLED)
+            host = host_of(site)
+            self._log(f"Entering the room of {host} (name and e-mail are not logged)", "info")
+
+            def work():
+                try:
+                    path = school_enter_room(site, nm, mail)
+                except LoginError as e:
+                    post(lambda e=e: failed(e))
+                except Exception as e:
+                    post(lambda e=e: failed(LoginError("login_err_other", clean(e)[:120])))
+                else:
+                    post(lambda: done(path))
+
+            def failed(e):
+                self._log(f"Entering the room of {host} failed: {e.args[0]} {e.info}", "warn")
+                busy[0] = False
+                if alive():
+                    _recolor(go_btn, C["green"]); go_btn.config(state=tk.NORMAL)
+                    cancel_btn.config(state=tk.NORMAL)
+                    extra = f"\n{self.t('login_site_said')} {e.info}" if e.info and e.args[0] in (
+                        "enter_err_fail", "login_err_other") else ""
+                    msg.config(text=self.t(e.args[0]) + extra, fg=C["red"])
+
+            def done(path):
+                busy[0] = False
+                self._cookies_file = path
+                self._lookup_cache.clear()
+                self._rescan_cookies()
+                self._log(f"Entered the room of {host}", "ok")
+                self._set_status("ok", "enter_ok", host=host)
+                if alive(): d.destroy()
+
+            threading.Thread(target=work, daemon=True).start()
+
+        d.update_idletasks()
+        x = self.winfo_rootx() + max(0, (self.winfo_width() - d.winfo_reqwidth()) // 2)
+        y = self.winfo_rooty() + max(0, (self.winfo_height() - d.winfo_reqheight()) // 3)
+        d.geometry(f"+{x}+{y}")
+        (e_name if v_site.get() else e_site).focus_set()
 
     def _logout(self):
         """Delete the login files made by the window above (and nothing else)."""
@@ -3079,8 +3964,9 @@ class App(tk.Tk):
             free = shutil.disk_usage(self._dl_dir).free
         except OSError:
             free = None
-        if free is not None and free < 10 * 1024 ** 3:      # a 2-hour webinar needs about 8 GB (recording + MP4)
-            if not messagebox.askyesno(self.t("nav_room"), self.t("room_low_disk", gb=f"{free / 1024 ** 3:.1f}"),
+        if free is not None and free < 6 * 1024 ** 3:       # 480p: about 1 GB per hour (recording + MP4)
+            if not messagebox.askyesno(self.t("nav_room"), self.t("room_low_disk", gb=(f"{free / 1024 ** 3:.1f}").replace(".", "," if self._lang == "ru" else "."),
+                                                                       h=max(0, int(free / 1024 ** 3 // 2))),
                                        parent=self):
                 return
         self._running = True; self._room_active = True
@@ -3093,6 +3979,9 @@ class App(tk.Tk):
 
     def _stop_room(self):
         if self._room_active and not self._room_stop.is_set():
+            if self._waiting_full and not messagebox.askyesno(
+                    self.t("nav_room"), self.t("room_stop_wait_ask"), icon="warning", default="no", parent=self):
+                return
             self._room_stop.set()
             self._set_status("busy", "st_room_stopping")
 
@@ -3115,7 +4004,8 @@ class App(tk.Tk):
         if self._room_active and not self._room_stop.is_set() \
                 and (secs == 0 or now - self._room_shown >= 3):
             self._room_shown = now
-            self._set_status("busy", "st_room_rec", t=fmt_hms(secs))
+            self._set_status("busy", "st_room_getting_full" if self._fetching_full
+                             else "st_room_rec_late" if self._late_start else "st_room_rec", t=fmt_hms(secs))
 
     def _room_converting(self):
         self._room_active = False
@@ -3125,12 +4015,13 @@ class App(tk.Tk):
     def _room_done_note(self, res, length_ok, real):
         """How the recording ended -> (status kind, wording key, values)."""
         t = fmt_hms(real or res["seconds"])
-        if res["failed"]:
-            return "warn", "st_room_done_skipped", {"n": res["failed"]}
+        lost = res["failed"] + (res.get("skipped") or 0)      # pieces that failed + pieces the playlist dropped before we got them
+        if lost:
+            return "warn", "st_room_done_skipped", {"n": lost}
         if not length_ok:
             return "warn", "st_room_done_check", {"t": t}
         if res["reason"] == "stalled":
-            return "warn", "st_room_done_stalled", {"t": t}
+            return "warn", "st_room_done_stalled", {"t": t, "m": getattr(self, "_room_idle_min", 3)}
         return "ok", "st_room_done_kept", {"t": t}      # becomes st_room_done once the .ts is removed
 
     def _room_clean_ts(self, ts, mp4, say):
@@ -3139,14 +4030,15 @@ class App(tk.Tk):
         note = self._done_note
         if not note or note[0] != "ok":
             return
-        a, b = self._media_seconds(ts), self._media_seconds(mp4)
+        a, b = self._media_seconds(ts, scan=True), self._media_seconds(mp4)
         if a and b and abs(a - b) <= max(2.0, a * 0.01) and os.path.getsize(mp4) > 0:
             try:
                 os.remove(ts)
             except OSError as e:
                 say(f"   Could not remove the .ts file: {clean(e)[:100]}", "warn"); return
             say("   MP4 checked (same length as the recording); the .ts file was removed", "ok")
-            self._done_note = ("ok", "st_room_done", note[2])
+            self._done_note = (("warn", "st_room_done_late_nofull" if self._wait_nofull else "st_room_done_late", note[2])
+                               if self._late_start else ("ok", "st_room_done", note[2]))
         else:
             say(f"   MP4 length {fmt_hms(b)} vs recording {fmt_hms(a)}: the .ts file was kept", "warn")
 
@@ -3162,7 +4054,21 @@ class App(tk.Tk):
         except Exception:
             pass
 
-    def _media_seconds(self, path):
+    def _media_seconds(self, path, scan=False):
+        """Length of a media file. A .ts has no length in its header: ffmpeg then GUESSES it
+        from size / bitrate (a 2 h 12 min recording was reported as 1 h 56 min). scan=True
+        reads the whole file without re-encoding and returns the real last time stamp."""
+        if scan:
+            try:
+                r = subprocess.run([self._ffmpeg, "-v", "error", "-stats", "-i", path, "-c", "copy",
+                                    "-f", "null", "-"], capture_output=True, text=True, errors="replace",
+                                   timeout=900 + os.path.getsize(path) // (4 * 1024 * 1024),   # ~ +1 s per 4 MB
+                                   creationflags=NO_WINDOW)
+                t = re.findall(r"time=(\d+):(\d+):(\d+(?:\.\d+)?)", r.stderr)
+                if t:
+                    return int(t[-1][0]) * 3600 + int(t[-1][1]) * 60 + float(t[-1][2])
+            except Exception:
+                pass                                   # fall back to the header value below
         try:
             r = subprocess.run([self._ffmpeg, "-hide_banner", "-i", path], capture_output=True,
                                text=True, errors="replace", timeout=120, creationflags=NO_WINDOW)
@@ -3173,26 +4079,64 @@ class App(tk.Tk):
 
     def _room_worker(self, link, stop):
         self._keep_awake(True)                  # no sleep while waiting, recording or converting
+        self._room_busy = True
         try:
             self._room_worker_body(link, stop)
         finally:
+            self._room_busy = False
             self._keep_awake(False)
 
     def _room_worker_body(self, link, stop):
         say = lambda m, tag="plain": self.after(0, lambda: self._log(m, tag))
         out = ""
+        self._late_start = False
+        self._waiting_full = False
+        self._fetching_full = False
+        self._wait_nofull = False
+        first = {}                                          # what VK said about the video when the recording started
+        gc_live = None                                      # refresh function of a school's live stream (video service)
         try:
             fetch = None
             if is_gc_webinar_link(link):                       # a school's own webinar page (GetCourse)
                 ck = self._cookie_file_for(link)
-                url, title = gc_webinar_stream(link, cookie_header_for(ck, link) if ck else "", self._ssl_ctx())
-                say("   Webinar page read (the school's own broadcast)")
+                cookie = cookie_header_for(ck, link) if ck else ""
+                page = gc_read_page(link, cookie, self._ssl_ctx())
                 origin = "https://" + urllib.parse.urlparse(link).netloc
+                wid = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(link).query)).get("id", "")
+                title = ("webinar " + wid).strip()
+                auto = gc_auto_info(page)
                 self.after(0, lambda: self._set_status("busy", "st_room_wait"))
-                if not gc_wait_for_playlist(url, origin, stop):
-                    self.after(0, lambda: self._room_end("st_room_cancel")); return
-                say("   On air")
-                fetch = lambda u, o=origin: gc_fetch(u, o)
+                if auto:                                       # a recording the school plays on a schedule
+                    say("   Webinar page read (scheduled recording; channel + playlist method)")
+                    video = gc_wait_for_video(auto, origin, stop)
+                    if video is None:
+                        self.after(0, lambda: self._room_end("st_room_cancel")); return
+                    say("   The school sent the video address")
+                    segs = gc_auto_segments(origin, video, cookie, stop)
+                    say(f"   Playlist: {len(segs)} segments, {fmt_hms(sum(d for _, d in segs))}")
+                    text = gc_auto_playlist(segs).encode()
+                    url = GC_AUTO_URL
+                    fetch = lambda u, o=origin, t=text: t if u == GC_AUTO_URL else gc_fetch(u, o)
+                elif gc_viewer_jwt(page):                          # live through the school's video service
+                    jwt = gc_viewer_jwt(page)
+                    say("   Webinar page read (the school's live stream goes through its video service)")
+                    got = gc_wait_for_live(jwt, origin, stop)
+                    if got is None:
+                        self.after(0, lambda: self._room_end("st_room_cancel")); return
+                    url, on_air_at_first = got
+                    say("   On air")
+                    if on_air_at_first:
+                        self._late_start = True
+                        say("   The broadcast was already on air when the recording was started: its beginning cannot be recorded", "warn")
+                    fetch = lambda u, o=origin: gc_fetch(u, o)
+                    gc_live = lambda: gc_live_refresh(jwt, origin)
+                else:
+                    url, title = gc_webinar_stream(link, cookie, self._ssl_ctx(), page=page)
+                    say("   Webinar page read (the school's own broadcast)")
+                    if not gc_wait_for_playlist(url, origin, stop):
+                        self.after(0, lambda: self._room_end("st_room_cancel")); return
+                    say("   On air")
+                    fetch = lambda u, o=origin: gc_fetch(u, o)
             else:
                 room, init = room_signin(link)
                 say("   Signed in to the room")
@@ -3200,21 +4144,117 @@ class App(tk.Tk):
                     self.after(0, lambda: self._room_end("st_room_cancel")); return
                 self.after(0, lambda: self._set_status("busy", "st_room_wait"))
                 origin = "https://" + urllib.parse.urlparse(room).netloc
-                got = room_wait_for_stream(init, origin, stop)
+                join = {}
+                got = room_wait_for_stream(init, origin, stop, info=join)
                 if got is None:
                     self.after(0, lambda: self._room_end("st_room_cancel")); return
                 vt, ref, title = got
                 say(f"   On air. Video type: {vt or '(none)'}")
-                url = stream_from_setting(vt, ref)
-            say("   Stream: " + urllib.parse.urlparse(url).netloc + urllib.parse.urlparse(url).path)
+                self._late_start = bool(join.get("on_air_at_join"))
+                if self._late_start:
+                    say("   The broadcast was already on air when the recording was started: its beginning cannot be recorded", "warn")
+                _p = urllib.parse.urlparse(str(ref))           # no query string, and never the part after the first comma (VK access hash)
+                say("   Video setting from the room: " +
+                    ((_p.netloc + _p.path) if _p.netloc else str(ref).split(",")[0][:40])[:90])
+                if (vt or "").lower() == "vk":
+                    say("   Asking VK for the video address...")
+                url = stream_from_setting(
+                    vt, ref, vk_resolve=lambda r: vk_stream_url(r, self._cookie_file_for(vk_page_url(r)) or "", info_out=first))
+                if first.get("is_live") is False and self._late_start:
+                    self._late_start = False             # an ordinary (pre-recorded) video shown as "live": it is recorded whole
+                    say("   VK shows this as an ordinary video, not a running broadcast: it is recorded from its start", "info")
+            if url != GC_AUTO_URL:
+                say("   Playlist address: " + urllib.parse.urlparse(url).netloc + urllib.parse.urlparse(url).path)
             stem = safe_name(title) or "webinar"
             out = unique_path(self._dl_dir, stem, ".ts")
             say("   Recording to: " + os.path.basename(out))
             self.after(0, lambda: self._room_progress(0))
+            renew = {}
+            self._room_idle_min = 3
+            if not is_gc_webinar_link(link) and (vt or "").lower() == "vk":
+                # VK: the stream address is asked for again every 20 minutes and whenever the stream looks stuck; a pause in
+                # the broadcast does not end the recording (15 minutes without a piece do); "no longer live" = the end.
+                renew = dict(refresh=lambda: stream_from_setting(
+                    vt, ref, vk_resolve=lambda r: vk_stream_url(r, self._cookie_file_for(vk_page_url(r)) or "", live_only=True)),
+                    refresh_every=20 * 60.0, idle_end=15 * 60.0)
+                self._room_idle_min = 15
+            if gc_live:                                    # school live stream: the address is asked for again like VK's
+                renew = dict(refresh=gc_live, refresh_every=20 * 60.0, idle_end=15 * 60.0)
+                self._room_idle_min = 15
             rec = RoomRecorder(url, out, stop, log=say, fetch=fetch,
-                               progress=lambda n, s, f: self.after(0, lambda: self._room_progress(s)))
+                               progress=lambda n, s, f: self.after(0, lambda: self._room_progress(s)), **renew)
             res = rec.run()
+            # A VK broadcast that ended and whose beginning is missing (we came late, or pieces were dropped): VK publishes the
+            # whole broadcast as a normal video a while after the end. Wait for it, record it and keep it instead of the partial one.
+            # Any problem in this block must never cost the partial recording: it is logged and the MP4 is made as usual.
+            if (not is_gc_webinar_link(link) and (vt or "").lower() == "vk" and res["segments"]
+                    and first.get("is_live") is not False
+                    and (res["reason"] in ("endlist", "ended") or (res["reason"] == "stalled" and self._late_start))
+                    and (self._late_start or res["failed"] or res.get("skipped"))):
+                try:
+                    cookie_vk = lambda r: self._cookie_file_for(vk_page_url(r)) or ""
+                    margin = 30.0 if self._late_start else 1.0      # a lost piece only: VK's video is about as long as ours
+                    hrs = VK_FULL_WAIT_MIN // 60
+                    total_wait = VK_FULL_WAIT_MIN * 60
+                    self._waiting_full = True
+                    self.after(0, lambda: self._set_status("busy", "st_room_wait_full", h=hrs, w=fmt_hms(0), r=fmt_hms(total_wait)))
+                    say("   The recording is not complete: waiting for VK to publish the full recording", "info")
+                    got_full = vk_wait_for_full(
+                        ref, res["seconds"], stop, log=say,
+                        resolve=lambda r, s_: vk_full_recording_url(r, s_, cookie_vk(r), margin),
+                        progress=lambda n, w: self.after(0, lambda: self._set_status(
+                            "busy", "st_room_wait_full", h=hrs, w=fmt_hms(w), r=fmt_hms(max(0, total_wait - w)))))
+                    self._waiting_full = False
+                    if got_full and not stop.is_set():
+                        out2 = unique_path(self._dl_dir, stem + " (full)", ".ts")
+                        say("   Recording the full video to: " + os.path.basename(out2))
+                        self._fetching_full = True
+                        self.after(0, lambda: self._room_progress(0))
+                        res2 = RoomRecorder(got_full[0], out2, stop, log=say,
+                                            progress=lambda n, s_, f: self.after(0, lambda: self._room_progress(s_))).run()
+                        self._fetching_full = False
+                        if res2["reason"] == "stopped":
+                            say("   Stopped while the full recording was being fetched: the live recording is kept", "warn")
+                            try: os.remove(out2)
+                            except OSError: pass
+                            raise StopIteration                  # leaves the block; the partial recording is converted below
+                        self.after(0, lambda: self._set_status("busy", "st_room_checking"))
+                        real2 = self._media_seconds(out2, scan=True) if res2["segments"] else 0
+                        whole = bool(real2) and abs(real2 - res2["seconds"]) <= max(5.0, res2["seconds"] * 0.01)
+                        if (res2["segments"] and not res2["failed"] and res2["reason"] == "endlist" and whole
+                                and res2["seconds"] >= res["seconds"] - 5):
+                            removed = True
+                            try: os.remove(out)                # the partial live recording is no longer needed
+                            except OSError: removed = False
+                            if removed:
+                                final = unique_path(self._dl_dir, stem, ".ts")
+                                try:
+                                    os.replace(out2, final); out2 = final
+                                except OSError:
+                                    pass
+                                say("   The full recording is saved; the partial live recording was removed", "ok")
+                            else:
+                                say("   The full recording is saved; the partial live file could not be removed and stays beside it", "warn")
+                            out, res, self._late_start = out2, res2, False
+                        else:
+                            say("   The full recording could not be saved completely: the live recording is kept", "warn")
+                            self._wait_nofull = True
+                            try: os.remove(out2)
+                            except OSError: pass
+                    elif not stop.is_set():
+                        self._wait_nofull = True
+                except StopIteration:
+                    self._fetching_full = False; self._waiting_full = False
+                except Exception as e:
+                    self._fetching_full = False; self._waiting_full = False
+                    self._wait_nofull = True
+                    say("   Could not get VK's full recording (" + clean(e)[:120] + "): the live recording is kept", "warn")
         except RoomError as e:
+            try:
+                if out and os.path.isfile(out) and os.path.getsize(out) == 0:
+                    os.remove(out)                         # nothing was recorded: no empty file is left behind
+            except OSError:
+                pass
             if stop.is_set():                              # the user already said stop: no red error
                 self.after(0, lambda: self._room_end("st_room_cancel")); return
             self.after(0, lambda e=e: self._room_fail(e.key, **e.info)); return
@@ -3242,13 +4282,16 @@ class App(tk.Tk):
             return
         self.after(0, self._room_converting)
         mp4 = unique_path(self._dl_dir, os.path.splitext(os.path.basename(out))[0], ".mp4")
-        real = self._media_seconds(out)             # the file's length must match the segments
-        length_ok = not (real and abs(real - res["seconds"]) > max(5.0, res["seconds"] * 0.01))
+        real = self._media_seconds(out, scan=True)  # the file's length must match the segments
+        expect = room_expected_seconds(res)
+        length_ok = not (real and abs(real - expect) > max(5.0, expect * 0.01))
+        if res.get("skipped"):
+            say(f"   {res['skipped']} piece(s) dropped out of the playlist before they could be fetched: the video has short gaps", "warn")
         if length_ok:
             say(f"   Length check OK: {fmt_hms(real or res['seconds'])}", "ok")
         else:
             say(f"   WARNING: file length {fmt_hms(real)} differs from the segments' "
-                f"{fmt_hms(res['seconds'])}", "warn")
+                f"{fmt_hms(expect)}", "warn")
         self._done_note = self._room_done_note(res, length_ok, real)
         self._convert_worker(out, mp4, after_ok=lambda m: self._room_clean_ts(out, m, say))
 
@@ -3298,8 +4341,11 @@ class App(tk.Tk):
                    "-i", src, "-map", "0:v:0?", "-map", "0:a:0?", "-c:v", "copy", *audio,
                    "-movflags", "+faststart", "-f", "mp4", "-y", tmp]
             try:
-                p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                import tempfile
+                ef = tempfile.TemporaryFile()                  # a full stderr pipe would stop ffmpeg and hang the loop below
+                p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=ef,
                                      text=True, errors="replace", creationflags=NO_WINDOW)
+                self._conv_proc, self._conv_tmp = p, tmp
                 for line in p.stdout:
                     if total and line.startswith(("out_time_us=", "out_time_ms=")):
                         try:
@@ -3309,7 +4355,9 @@ class App(tk.Tk):
                         if time.time() - last > 0.4:
                             last = time.time()
                             self.after(0, lambda v=pct: self._conv_progress(v))
-                err = p.stderr.read(); code = p.wait()
+                code = p.wait()
+                self._conv_proc = None
+                ef.seek(0); err = ef.read().decode("utf-8", "replace"); ef.close()
             except Exception as e:
                 err, code = str(e), 1
             if code == 0 and os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
@@ -3499,9 +4547,11 @@ class App(tk.Tk):
             return b
         self.after(0, lambda: self._log(f"►  {referer_for(url) or url}", "info"))
         def go(o, u):
-            with yt_dlp.YoutubeDL(o) as y:
-                i = y.extract_info(u, download=True)    # one extraction: info and download
-                self.after(0, lambda t=(i or {}).get("title", "?"): self._log(f"   {t}"))
+            def run(o2):
+                with yt_dlp.YoutubeDL(o2) as y:
+                    i = y.extract_info(u, download=True)    # one extraction: info and download
+                    self.after(0, lambda t=(i or {}).get("title", "?"): self._log(f"   {t}"))
+            run_into_free_names(o, run)                     # a file with the same name is never overwritten: "name (1)"
             return True
         meta = {}
         try:
@@ -3837,8 +4887,14 @@ class App(tk.Tk):
                 if not re.match(r"\d+\b", safe):
                     safe = f"{it.get('pos', n):02d} - {safe}"
                 base["outtmpl"] = os.path.join(item_dir, f"{safe}.%(ext)s")
-            def go(o, u):
-                with yt_dlp.YoutubeDL(o) as y: y.download([u]); return True
+            def go(o, u, named=bool(it.get("named"))):
+                def run(o2):
+                    with yt_dlp.YoutubeDL(o2) as y: y.download([u])
+                if named:           # numbered course items: the same name is the same lesson, so a finished one is skipped
+                    run(o)
+                else:               # everything else: a taken name gets "(1)", "(2)" instead of being overwritten
+                    run_into_free_names(o, run)
+                return True
             target, title = self._resolve_player(it["url"], ref)
             if title and not it.get("named"):
                 base["outtmpl"] = os.path.join(item_dir, safe_name(title) + ".%(ext)s")
@@ -4031,8 +5087,10 @@ def _cli_attempt(url, out_dir, insecure=False, download=True, verbose=True):
                 if cs:
                     o["extractor_args"] = {"youtube": {"player_client": list(cs)}}
                 try:
-                    with yt_dlp.YoutubeDL(o) as y:
-                        info = y.extract_info(u, download=download)
+                    def _run(o2, u=u):
+                        with yt_dlp.YoutubeDL(o2) as y:
+                            return y.extract_info(u, download=download)
+                    info = run_into_free_names(o, _run) if download else _run(o)
                     label = sname + (f" + {'/'.join(cs)}" if cs else "")
                     if u != url:
                         label += f" [via {host_of(u)}]"

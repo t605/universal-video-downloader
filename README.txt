@@ -1,5 +1,5 @@
 ===============================================================
-  UNIVERSAL VIDEO DOWNLOADER                       version 9.23
+  UNIVERSAL VIDEO DOWNLOADER                       version 9.28
   Saves videos from the internet to your computer, in 480p
 ===============================================================
 
@@ -78,8 +78,8 @@ GOOD TO KNOW
     downloads anything until you press the green button.
   * Keyboard: the Tab key moves to the links at the bottom of
     the window, and the Space key ticks or unticks a lesson in
-    a list. The smallest size of the window is larger now, so
-    that everything stays visible.
+    a list. The window cannot be made smaller than a size at
+    which everything stays visible.
 
 
 ---------------------------------------------------------------
@@ -164,7 +164,8 @@ for your Windows user only, into this folder:
 
 You never need to open that folder. The Setup also adds
 "Universal Video Downloader" to the Start menu, and "Universal
-Video Downloader - Read me", which opens this file.
+Video Downloader - Read me", which opens this file (and a
+Russian read-me).
 
 STEP 5 - The program opens
 --------------------------
@@ -267,6 +268,11 @@ The line "Videos are saved in:" shows the folder. At first it
 is your Downloads folder. "Open folder" opens it. "Change"
 lets you pick another folder. The program remembers your
 choice.
+
+If a file with the same name is already there, the program
+never replaces it. The new video is saved as "view (1)", the
+next one as "view (2)", and so on. (Lessons of one school
+often get the same name, for example "view".)
 
 If your Downloads folder is synchronised by OneDrive, big
 videos will also be uploaded to the cloud, and that can use up
@@ -760,40 +766,77 @@ broadcast while it runs and turn it into an MP4 file for you.
     ".ts" file. If anything looks wrong (pieces missing, a
     different length), it keeps the ".ts" too and the final
     message says so; play the .mp4 before you delete the .ts.
-  * If you start late, the program records the broadcast from
-    its very beginning, not from the moment you pressed the
-    button.
-  * If the school sends no video for more than 3 minutes (for
-    example a long break, or the broadcast broke off), the
-    program decides it is over, saves what it has and stops.
+  * Start BEFORE the webinar begins. In a Rutube room the
+    program records from the very beginning even if you start
+    late; for VK it cannot (see below), and a school's live
+    page gives only the last minute or two (see the section on
+    school pages).
+  * If no video arrives for more than 3 minutes (for example a
+    long break, or the broadcast broke off), the program
+    decides it is over, saves what it has and stops. For a VK
+    room or a school's live webinar the limit is 15 minutes,
+    so a pause does not end it.
     After a break, start a new recording.
   * The final message says how it ended. If some short pieces
     could not be downloaded, it says so (the video may jump).
   * While the program is only waiting for the broadcast to
-    begin, "Stop and save" simply cancels.
+    begin, "Stop and save" cancels and nothing is saved. During
+    and after a broadcast it saves what is already recorded.
   * If you close the window during a recording, the program
     asks first. If you close it anyway, or switch the computer
     off, the recording stops and no MP4 is made. The ".ts" file
     stays in the folder: use "Convert to MP4" on it.
-  * This works only for a webinar that is on air now or starts
-    soon. A webinar that is already over cannot be recorded.
+  * A real live broadcast must be on air now or start soon.
+    Exceptions: a school's pre-recorded "live" webinar (see
+    SCHOOL WEBINAR PAGES) and a VK webinar that this program
+    was recording when it ended (see below). Any other
+    finished webinar cannot be recorded here; a finished VK
+    video can be downloaded by pasting its address on the
+    main screen.
+  * Which part you get, by kind of room: Rutube room: the
+    whole broadcast. VK room: only the last half minute, then
+    the program waits for VK's full recording. School live
+    page: the last minute or two. School pre-recorded video:
+    the whole video. Whichever it is, press "Start recording"
+    BEFORE the webinar begins. The raw ".ts" file is the
+    unfinished copy that the program writes while recording.
   * The program needs its helper module (FFmpeg) for the MP4.
     In the Setup version it is already inside.
   * The program uses the personal part of the link only to
     enter the room as you; it does not save it anywhere.
-  * A recording is big: about 2 GB per hour. A two-hour webinar
-    needs about 4 GB for the raw ".ts" file and about 4 GB more
-    for the ".mp4" while it is being made, so keep about 8 GB
-    free on the disk.
+  * A recording is saved in 480p: up to about 1 GB per hour
+    (often less). A two-hour webinar needs up to 2 GB for the
+    raw ".ts" file and up to 2 GB more for the ".mp4" while
+    it is being made. If VK's full recording is fetched, that
+    is one more file of the same size for a while. Keep a few
+    GB free on the disk.
   * Before it records, the program checks the free space. If
-    less than 10 GB are free, it asks, for example: "Only 5.2
-    GB are free on the drive where videos are saved. A webinar
-    of two hours needs about 8 GB (the recording, and then the
-    MP4). Record anyway?" Free some space first if you can.
-  * Only rooms whose video comes from the Rutube website are
-    supported so far (you cannot tell from the link; just try,
-    the program will say so). For another kind it shows a code:
-    tell the person who helps you and give them that code.
+    less than 6 GB are free, it asks, for example: "Only 5.2
+    GB are free on the drive where videos are saved. That is
+    enough for about 2 h of webinar (the recording, and then
+    the MP4). If the webinar is longer, press No and free some
+    space. Record anyway?" Free some space first if you can.
+  * Rooms whose video comes from Rutube or VK are supported
+    (VK since version 9.27, tried on a real live broadcast).
+    You cannot tell from the link which kind a room is. The
+    program learns it only when the broadcast starts, so be
+    at the computer at that time. A VK room that is already
+    on air gives only the last half minute of the picture:
+    start the recording BEFORE the broadcast begins, because
+    what was shown before you pressed the button cannot be
+    fetched. When a VK broadcast ends and the recording is not
+    complete (you came late, or pieces were lost), the program
+    waits for VK to publish its own full
+    recording (up to 4 hours: VK needed over 3 hours once;
+    the window shows how long it has waited) and saves that
+    instead. Keep the window open and the computer on during
+    that time; "Stop and save" keeps what is already
+    recorded. If VK gives nothing in 4 hours, the final
+    message says so and the partial recording is saved. If
+    you close the window during the wait, only the raw ".ts"
+    stays: use "Convert to MP4" on it.
+    For another kind of room it shows a code: tell the person
+    who helps you and give them that code.
 
 SCHOOL WEBINAR PAGES  (/pl/webinar/show)
 ----------------------------------------
@@ -805,17 +848,68 @@ button "Record a webinar room" works for it.
   1. Log in to the school first (section 5).
   2. At the bottom, click "Record a webinar room". Paste the
      link and press "Start recording".
-  3. The program waits until the broadcast starts. Keep the
-     window open and the computer plugged in.
-  4. When the webinar is over, you get an MP4 file. Its name
-     is "webinar" and the number from the link.
+  3. The program waits until the school's page starts the
+     webinar. Keep the window open and the computer plugged in.
+  4. When it is finished, you get an MP4 file. Its name is
+     "webinar" and the number from the link.
 
-NOT TESTED YET on a real live broadcast: this kind of page was
-only checked on a webinar that had already ended (it cannot be
-recorded after the end: the program then keeps waiting, press
-the red Stop button). If the school put the recording of a
-finished webinar into a lesson, paste that lesson's link on the
-main screen: that is a normal video.
+Many schools do not broadcast live: the "live" webinar is a
+video recording that their page plays at a fixed time. The
+program takes the whole video from its very beginning, even
+if you start late, and saves it in a few minutes (a 4.5 hour
+webinar is about 2.3 GB for the recording and about as much
+again while the MP4 is made: keep 6 GB of disk space free).
+For a live room count up to 1 GB per hour.
+
+A webinar that is really live (a person on camera) is
+recorded from the moment you press "Start recording" and a
+little before (the school keeps only the last minute or two
+of a live broadcast). So start the recording BEFORE the
+webinar begins. Do not close the window until it says Done.
+Some schools send their live broadcast through a separate
+video service of the platform. The program asks that service
+for the broadcast, as the school's page does, and records
+it in 480p. (Tried on one real live webinar of such a
+school: a short test recording played without errors. NOT
+tried yet: a whole webinar of such a school.) If the
+broadcast is already on air when you press the button, the
+final message begins "Saved, but not complete: the beginning
+is missing"; for these
+schools there is no later full recording in the program: if
+the school puts the recording into a lesson, paste that
+lesson's link on the main screen.
+
+THE SCHOOL ASKS FOR A NAME AND E-MAIL (no password)
+Some schools have no password: you enter the webinar with a
+button "Enter the room" after a small form (name and e-mail).
+The program does not know you then, and says that the page
+holds no broadcast address. Two ways:
+  A. On the page "Record a webinar room" click "The school
+     asks for a name and e-mail? Enter the room here...".
+     Fill in the address, your name and the e-mail you
+     registered with, tick the box and press "Enter the
+     room". The program sends the form to that school, as
+     your browser does. Then press "Start recording". Your
+     name and e-mail are not saved by the program.
+     (This way was tested only with a made-up school.) It
+     never replaces a saved password login: it saves its
+     own file.
+  B. Use a login file (section 5, Option B), exported from
+     your browser while you are inside the webinar.
+How long a login lasts is decided by the school. If the
+program says again that the page holds no broadcast
+address, repeat A or B.
+
+TESTED: the recording of live webinars of one school (three
+hours each) worked. For VK: the program's own functions were
+tried on one real broadcast; VK published the full recording
+about 3 hours 20 minutes after the end and it was downloaded.
+NOT TESTED: the whole VK sequence inside the program window,
+other schools, and the "name and e-mail" form (A) on a real
+school. If something fails,
+tell the person who helps you. If the school put the
+recording of a finished webinar into a lesson, paste that
+lesson's link on the main screen: that is a normal video.
 
 COURSE PAGES WITH SEVERAL VIDEOS
 --------------------------------
@@ -998,6 +1092,53 @@ The program does not open at all
      (section 2). If it still does not open, ask your helper
      and tell them what you saw on the screen.
 
+RECORDING A WEBINAR: what the messages mean
+-------------------------------------------
+"Waiting for the broadcast to begin..."
+  -> Normal. Keep the window open.
+"Recording... The broadcast was already on air when the
+recording started, so its beginning is not in this recording."
+  -> You pressed the button after the start. For VK, wait: the
+     program fetches VK's full recording after the end.
+"The broadcast has ended. Waiting for VK's full recording, so
+that the whole webinar is in the video. Waited: ..., at most
+... left. You may do other things..."
+  -> Keep the window open and the computer on. "Stop and save"
+     keeps what is already recorded.
+"Saved, but not complete: the beginning is missing..."
+  -> The MP4 is saved without the start. Later, ask your
+     helper to find the video's address in VK and paste it on
+     the main screen.
+"Done, but some short pieces could not be downloaded..." or
+"Done, but the length of the video does not match..." or
+"The broadcast sent no video for N minutes..."
+  -> The MP4 exists and the ".ts" was kept. Play the MP4
+     before you delete the ".ts".
+"This link does not look like a webinar..."
+  -> Copy the address of the page where the webinar is shown.
+"The webinar page could not be opened. Log in to the school
+first..." / "This webinar page holds no broadcast address..."
+  -> Log in to the school (section 5). If the school has no
+     password, see THE SCHOOL ASKS FOR A NAME AND E-MAIL.
+"The room did not let the program in." / "The room did not
+answer." / "Could not connect to the room's broadcast."
+  -> Check the internet, wait a minute, press "Start
+     recording" again. If the link no longer works, ask the
+     school for a new one.
+"This room plays its video from a source the program cannot
+record yet... code: ..."
+  -> Tell your helper the code.
+"This broadcast is encrypted (copy-protected)..."
+  -> It cannot be recorded. Watch it on the website.
+"The recording could not be written. The disk may be full."
+  -> Free about 1 GB per hour of webinar, then try again. If
+     part of the file was saved, use "Convert to MP4" on it.
+"Only X GB are free ... Record anyway?"
+  -> Press No and free some space, or ask your helper.
+"Nothing could be recorded from this room..."
+  -> The broadcast may not have started. Try again when it is
+     on air.
+
 FOR YOUR HELPER
 ---------------
 The log file is
@@ -1062,12 +1203,13 @@ below are general guidance, not legal advice.
     download engine catches up (usually within days). Closing
     and opening the program the next day often fixes it.
   * Windows only. There is no version for Mac or Linux.
-  * Webinar rooms: only rooms whose video comes from Rutube,
-    and only while you keep the window open and the computer
-    awake. It cannot record a room whose link has expired or
-    that needs a password you do not have. A webinar that has
-    already ended and was not recorded by the school cannot be
-    recovered.
+  * Webinar rooms: rooms whose video comes from Rutube or VK,
+    and school webinar pages (/pl/webinar/show). Only while
+    you keep the window open and the
+    computer awake. It cannot record a room whose
+    link has expired or that needs a password you do not have.
+    A webinar that has already ended and was not recorded by
+    the school cannot be recovered.
 
 
 ---------------------------------------------------------------
@@ -1117,6 +1259,9 @@ version.
   A website stopped .... close and reopen the program; then
                          "Update now"; then ask for a new Setup
   Need a login ......... "Log in to websites" (section 5)
+  Record a webinar ..... bottom link "Record a webinar room",
+                         then "Start recording" BEFORE it
+                         begins (section 6)
   Uninstall ............ Settings > Apps > Installed apps >
                          Universal Video Downloader > Uninstall
 
@@ -1163,10 +1308,12 @@ Python by itself.
 
   1. Unzip UniversalVideoDownloader.zip into a folder of your
      own, for example  Documents\VideoDownloader\ . Do not run
-     it from inside the zip file. The folder holds three files:
+     it from inside the zip file. The folder holds five files:
          VideoDownloader.bat    <- the one you double-click
          VideoDownloader.py     <- the program itself
          README.txt             <- this file
+         README_RU.txt          <- the Russian guide
+         LICENSE                <- the licence
      They must stay together in the SAME folder.
   2. Double-click VideoDownloader.bat. A black window walks
      through four checks:

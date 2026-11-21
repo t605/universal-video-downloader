@@ -1,0 +1,67 @@
+Universal Video Downloader 9.28 - school live webinars, VK webinar rooms that are on air, files never overwritten
+
+Versions 9.24 to 9.27 were built but never published; 9.28 includes everything from them (see release-notes-9.24 to 9.26) and the changes below.
+
+New since 9.26 (this includes the unpublished 9.27):
+
+- VK webinar rooms that are on air now work. A room can announce its VK video as a player-page address
+  (video_ext.php?...). The program could not read that form ("the program could not get the video address from VK").
+  It now turns it into the address of the same video that the download engine reads, so the broadcast is recorded.
+  Tested on a real running live broadcast: the address and the playlist were found and the first minutes were recorded
+  as a valid MPEG-TS file. Limit: VK gives a running broadcast only as a window of the last half minute, so start the
+  recording before the broadcast begins; what was shown before you pressed the button cannot be fetched.
+- A VK recording asks VK for a fresh address when the stream seems stuck. On a real room the first recording ended at
+  32 minutes because the playlist stopped growing for three minutes while the broadcast went on. The cause is not certain
+  (the stream address may have expired, or the stream had a break; a second recording, started with a fresh address, ran
+  past 32 minutes without any problem). The program now asks VK for a fresh address every 20 minutes and whenever no new
+  piece has arrived for 45 seconds, and carries on in the same file with no piece lost or written twice. (Tested with a
+  made-up stream; not yet with a real VK break.)
+- A file is never overwritten or skipped. Every GetCourse lesson page ends in /view, so all lessons were named view.
+  Now a download that finds the name taken saves the new file as view (1), the next as view (2), and so on. The program
+  downloads into a hidden folder first and moves the finished file in, so a file that is already there stays untouched, and
+  a download that stops half way still delivers the files it finished. Numbered course items ("01 - ...") keep the old
+  behaviour on purpose: a finished one is skipped, so the same list can be run again to fetch what is missing.
+  Recordings and "Convert to MP4" now also number their copies from (1) (it was (2)).
+- Recordings of rooms are 480p. A recording takes about 1 GB per hour (720p was about 8 GB for three hours), so the disk
+  estimate and the low-disk question (below 6 GB free) now use that figure.
+- The end of a VK broadcast is recognised. When VK says the video is no longer live, the recording ends cleanly. A pause
+  of the broadcast (up to 15 minutes) does not end it.
+- Late start is said plainly. If the broadcast was already on air when the recording began, the status and the final
+  message say that the beginning is missing, and the help text says to press "Start recording" BEFORE the webinar.
+- The full recording of a VK webinar is fetched automatically. When a VK broadcast ends and the beginning is missing, the
+  program waits for VK to publish its own full recording (up to 4 hours: on a real webinar VK needed 3 hours 20 minutes),
+  downloads it in 480p, checks its length and saves it instead of the partial one. Keep the window open and the computer on.
+  If VK gives nothing, the program says so; "Stop and save" keeps what is already recorded. (Verified on a real webinar with a
+  separate script that used the same functions: the full recording, 2 h 28 min, was downloaded and its length matched VK's.
+  The wait inside the window itself was tested only with made-up servers.)
+- Fixes after the pre-release review. A pre-recorded video that a room shows as live no longer triggers the long wait; any error while waiting for or fetching VK's full recording keeps the partial recording and still makes the MP4; the full recording is checked against its real length before the partial one is removed; a single lost piece no longer makes the wait pointless; VK is asked every 3 minutes (was every minute); the window shows how long it has waited and has its own text while the full recording is downloaded; the end of a fruitless wait is said plainly; the close question says the .ts stays; leftover hidden download folders older than a day are removed; the help text, the README and the Russian guide (new section 7, recording a webinar) were corrected.
+- More fixes from the second review. A VK recording that ends as "stalled" after a late start also waits for VK's full recording; the end of a broadcast must be reported twice in a row before it counts; a renewed stream address that numbers its pieces from the start again no longer stalls the recording; an encrypted (copy-protected) stream is refused with a plain message instead of producing a garbled MP4; a full recording is used only after its real length was checked; Stop during the fetch of the full recording keeps the live recording and no longer says VK gave nothing; Stop works at once even with the network down; the MP4 conversion can no longer hang on a full error pipe; closing the window while the room worker runs always asks first; a long status message is no longer cut off (smaller type and more lines); the Russian disk-space question uses a decimal comma; the README (English, Russian, GitHub page) was corrected and got a list of the recording messages.
+- Clearer waiting and stopping. While the program waits for VK's full recording the window shows the time waited and the time left at most, says that you may do other things (laptop plugged in, lid and window open); "Stop and save" during that wait asks first; the late-start message says that for VK the full recording will be fetched; the question about low disk space says for how many hours the space is enough; a partly saved recording is called "saved, but not complete" instead of "Done, but"; the header word is now "Исправно" / "All OK" (it describes the program, not the job).
+- School live webinars through the platform's video service. Some schools (found on a real one) show a live broadcast whose address on the page answers "not found"; the real address comes from the platform's video service. The program now reads the viewer token from the page, asks that service, waits until the broadcast is on air, records it in 480p and asks for a fresh address every 20 minutes. Tried on a real live webinar: a 5-minute recording played with picture and sound; its first version had four 2-second gaps because the playlist was asked too slowly (now every second for 2-second pieces: a following 60-second test had no gap); decoded without errors (h264 854x480 + AAC). Not tried: a whole webinar of such a school.
+- Fixes after the last review (9.28). A recording in which pieces dropped out of the playlist before they could be fetched is no longer reported as plain "Done": it is called "saved, but not complete" and the raw .ts file is kept. The wait for a school's live broadcast no longer ends on one failed answer of the video service (it gives up after five in a row), and a broadcast that was already on air at the first look is called a late start even if its playlist answered a moment later. A "not live" answer followed by an empty one no longer counts as the end of the broadcast. The English disk-space question no longer says "1 hours". The README quotes of the program's messages were corrected.
+- Calmer closing and renewing (9.28). A school's live webinar now survives a pause of up to 15 minutes (it was 5). Closing the window during an ordinary download, a scan or an MP4 conversion asks "Close anyway?" first; a conversion that is still running is stopped and its half-made `.mp4.part` file is removed when you close. Asking the platform for a fresh stream address is limited to 25 seconds, so a slow answer can no longer hold the recording for minutes while pieces drop out.
+- A larger window. It opens at 1000 x 840 (minimum 820 x 840), so the button "The school asks for a name and e-mail?"
+  on the "Record a webinar room" page is no longer cut off in Russian. (This was already in the 9.26 build.)
+
+Built with Claude Code: the rules and decisions are the owner's, the program code was written with Claude Code.
+
+Files
+
+  UniversalVideoDownloader-Setup.exe (recommended)  51.6 MB  SHA-256 23754C8A2D4B2FCD335BBAAE2D44B1CC37925C2D1AEEC7B7DFB34D3D1D2BFCE5
+  UniversalVideoDownloader.zip (alternative: a .bat launcher)  0.1 MB  SHA-256 5FC4551B495F2100521C5F7D6EBCE7662282B6E6850060F62D84BB7A7B04DED0
+
+Tested
+
+- 179 automated offline tests pass (66 room, 20 audio and file names, 22 login, 8 scan, 7 engine, 7 texts, 49 webinar pages).
+- The three ways of naming files were tried with the real download engine: three different files with the same name were
+  saved as view, view (1), view (2), with no leftovers.
+- Against a real room that was on air: the program signed in, found the VK address, read the playlist (no encryption) and
+  recorded it without a failed piece; a second real run recorded the broadcast to its end.
+- Every page of the window was measured in both languages at the default and the smallest size: nothing is clipped.
+- Not tested: a whole webinar of a school's live broadcast through the video service, the end of such a broadcast, a pause longer than 15 minutes in it, a restart of its stream; the whole chain (record, wait for VK, download the full recording) through the window itself on a real room, the Setup install of this exact build, a clean second PC, Windows 10, screen scaling above 100 %.
+- Known limits: a guest entry made for a school is used before
+  that school's saved password login until you log in again or restart; a school link that came in an e-mail (it signs you in
+  through a tracking address) is not supported yet.
+
+Everything else is as in 9.21: install steps, limits (no copy-protected video, no CAPTCHA login, Windows 10/11 64-bit only), licence MIT
+with third-party notices.

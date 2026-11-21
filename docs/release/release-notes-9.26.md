@@ -1,0 +1,49 @@
+# Universal Video Downloader 9.26 - recorded webinars from VK, clearer buttons
+
+**New since 9.25:**
+
+- **Webinar rooms that play their video from VK.** Some schools record their webinar in advance and let a room show it as a "live" broadcast; the
+  room then names a VK video. The program now reads that VK address, takes the playlist and records it like any other room. The real room
+  answered with a finished 3 h 41 min video (2215 pieces, up to 720p); the program turned that answer into a playlist address, but
+  **a full recording of such a room through the window was not run yet**. If VK does not give the video, the program says so in plain words
+  (wait five minutes and press "Start recording" again). The room's own VK access code is never written to the log.
+- **Buttons you can see.** "Back", "Clear", "Open folder", "Change", "Tick all", "Cancel" and the other quiet buttons used to blend with the page.
+  They are now white with a thin black edge and turn light blue under the mouse or when you reach them with the Tab key. The links at the
+  bottom of the window are bordered buttons too.
+- **A larger window.** The window now opens at 1000 x 840 (it was 980 x 760) and cannot be made smaller than 820 x 820. On the page "Record a webinar room"
+  the button "The school asks for a name and e-mail? Enter the room here..." was cut off at the bottom in Russian; it now sits right under "Stop and save"
+  and every page was measured to fit in both languages at the default and at the smallest size.
+- **Clearer texts.** The room page tells you that the program learns where the video comes from only when the broadcast starts (be at the
+  computer then), and that a school link with `/pl/webinar/show` is accepted. The log says "Asking VK for the video address..." and names the
+  playlist address.
+
+**Also (from 9.25):** the "name and e-mail" entry is saved in its own file and never replaces a password login; the length check of a long
+recording waits longer for big files.
+
+Install this Setup over the older one: settings, logins and downloads stay.
+
+*Built with Claude Code: the rules and decisions are the owner's, the program code was written with Claude Code.*
+
+## Files
+
+| File | Size | SHA-256 |
+|---|---|---|
+| UniversalVideoDownloader-Setup.exe (recommended) | 51.5 MB | `75C4EA81B96B2CDB04BF58F79B3E54F6D2E08423E436F7983F10E4E3E88C9405` |
+| UniversalVideoDownloader.zip (alternative: a `.bat` launcher) | 0.1 MB | `597522AC4073F27E7FF0675EBF0DE99741797D4FAC623ED32649C4F52C796ABE` |
+
+## Tested
+
+- 133 automated offline tests pass (38 room, 13 audio, 22 login, 8 scan, 7 engine, 7 texts, 38 webinar pages and entry form).
+- Against the real room (read-only, nothing downloaded): the room's VK setting was turned into the correct VK address, and the program got a
+  complete playlist (5 quality levels, 2215 pieces, 13290 s, finished).
+- Six read-only reviews (installer and desktop, window design, consistency, clarity, code quality, pre-commit check) were run; their findings
+  were fixed except the ones listed below.
+- Pictures of the program's own window (34 pictures, both languages) were made and looked at; they did NOT catch the cut-off room-page button (it was visible in them). After the owner found it, every page was measured (needed height against the real window) in both languages at the default and the smallest size: no page is clipped.
+- **Not tested:** a full recording of a VK room (does VK's file server need more than the address? are the pieces plain, not encrypted?), the
+  Setup install of this exact build, a clean second PC, Windows 10, screen scaling above 100 %, the keyboard Tab highlight on a real screen.
+  The VK lookup with a login file is only tested with made-up files. `README_RU.txt` does not describe the webinar buttons.
+- **Known limits:** a VK recording takes the best quality VK offers (up to 720p), so the file is larger than a 480p download; a guest entry
+  made for a school is used before that school's saved password login until you log in again or restart.
+
+Everything else is as in 9.21: install steps, limits (no copy-protected video, no CAPTCHA login, Windows 10/11 64-bit only), licence MIT
+with third-party notices.

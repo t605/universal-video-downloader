@@ -113,5 +113,81 @@ class DrmMessage(unittest.TestCase):
     def test_other_errors_are_not_called_drm(self):
         self.assertNotEqual(vd.App._diagnose(None, "HTTP Error 403: Forbidden")[0], "d_drm")
 
+
+class FreeNames(unittest.TestCase):
+    """A download never overwrites a file and is never skipped: 'view', 'view (1)', 'view (2)' (owner's rule 2026-11-20:
+    every GetCourse lesson page ends in /view, so all lessons got the same name)."""
+
+    def setUp(self):
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dir = self._tmp.name
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def opts(self, name="view"):
+        return {"outtmpl": os.path.join(self.dir, name + ".%(ext)s")}
+
+    @staticmethod
+    def writer(*files, fail=False):
+        """a stand-in for yt-dlp: writes the given (name, text) files next to the outtmpl it is given"""
+        def run(o):
+            folder = os.path.dirname(o["outtmpl"])
+            for name, text in files:
+                with open(os.path.join(folder, name), "w") as f:
+                    f.write(text)
+            if fail:
+                raise RuntimeError("download stopped")
+            return "done"
+        return run
+
+    def names(self):
+        return sorted(os.listdir(self.dir))
+
+    def test_same_name_three_times(self):
+        for i in (1, 2, 3):
+            vd.run_into_free_names(self.opts(), self.writer(("view.mp4", f"video {i}")))
+        self.assertEqual(self.names(), ["view (1).mp4", "view (2).mp4", "view.mp4"])
+        content = {}
+        for n in self.names():
+            with open(os.path.join(self.dir, n)) as f:
+                content[n] = f.read()
+        self.assertEqual(content, {"view.mp4": "video 1", "view (1).mp4": "video 2", "view (2).mp4": "video 3"})
+
+    def test_an_existing_file_is_left_untouched(self):
+        with open(os.path.join(self.dir, "view.mp4"), "w") as f:
+            f.write("old")
+        vd.run_into_free_names(self.opts(), self.writer(("view.mp4", "new")))
+        for name, want in (("view.mp4", "old"), ("view (1).mp4", "new")):
+            with open(os.path.join(self.dir, name)) as f:
+                self.assertEqual(f.read(), want)
+
+    def test_returns_the_result_and_leaves_no_hidden_folder(self):
+        self.assertEqual(vd.run_into_free_names(self.opts(), self.writer(("view.mp4", "x"))), "done")
+        self.assertFalse([n for n in self.names() if n.startswith(".vdl_")])
+
+    def test_unfinished_pieces_are_not_delivered(self):
+        vd.run_into_free_names(self.opts(), self.writer(
+            ("view.mp4", "ok"), ("view.mp4.part", "half"), ("view.f137.mp4", "video only"), ("view.f140.m4a", "audio only")))
+        self.assertEqual(self.names(), ["view.mp4"])
+
+    def test_a_failed_download_still_delivers_the_files_it_finished(self):
+        with self.assertRaises(RuntimeError):
+            vd.run_into_free_names(self.opts(), self.writer(("one.mp4", "1"), ("two.mp4.part", "half"), fail=True))
+        self.assertEqual(self.names(), ["one.mp4"])
+
+    def test_options_without_a_template_run_unchanged(self):
+        seen = []
+        vd.run_into_free_names({"format": "best"}, lambda o: seen.append(o) or "x")
+        self.assertEqual(seen, [{"format": "best"}])
+
+    def test_the_template_the_downloader_sees_is_inside_a_sub_folder(self):
+        got = []
+        vd.run_into_free_names(self.opts("lesson"), lambda o: got.append(o["outtmpl"]))
+        self.assertNotEqual(os.path.dirname(got[0]), self.dir)
+        self.assertTrue(got[0].endswith("lesson.%(ext)s"))
+
+
 if __name__ == "__main__":
     unittest.main()

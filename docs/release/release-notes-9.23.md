@@ -1,0 +1,34 @@
+# Universal Video Downloader 9.23 - webinar pages of schools can be recorded
+
+**New:** the button "Record a webinar room" now also accepts the webinar page of a school's own platform (the web address contains
+`/pl/webinar/show`), not only `/room/` links. Log in to the school first, paste the link and press "Start recording": the program reads the
+stream address from the page, waits until the broadcast is on air, and records it from the start, like for a room. A finished webinar that
+has a recording in a lesson is a normal video: paste the lesson link on the main screen.
+
+**IMPORTANT - live broadcasts do NOT work yet (found 2026-11-17 on a real live webinar):** during a live broadcast the school's page does not use the address that its player settings list (that address answers an error while the broadcast is on air); the live picture reaches the player through the school's own "bridge" server and a live connection. So the program waits forever on a live webinar of this kind. Only the page reading and the waiting logic are done; the real mechanism is being investigated and will come in a later version. Recording of **rooms** (`/room/` links) is unchanged and works as before.
+
+**Original note:** the recording of this kind of page was **not tested on a real live broadcast** (only the page reading, the waiting and the
+saving logic were tested, offline and on a finished webinar). If it fails on your next live webinar, tell me what the log says.
+
+Version 9.23 also contains 9.22: a course video whose only quality was just above 480p (484p, sound in a separate stream) failed with
+"Requested format is not available"; now it downloads. Install this Setup over the older one (settings and downloads stay).
+
+*Built with Claude Code: the rules and decisions are the owner's, the program code was written with Claude Code.*
+
+## Files
+
+| File | Size | SHA-256 |
+|---|---|---|
+| UniversalVideoDownloader-Setup.exe (recommended) | 51.5 MB | `3B6AA84265DCEBAFDFDB2E97FEDB50072D5778EBB28316D7CF0AF5BC42C07582` |
+| UniversalVideoDownloader.zip (alternative: a `.bat` launcher) | 0.1 MB | see the file list of this release |
+
+## Tested
+
+- 105 automated offline tests pass (14 new ones for the school webinar pages: link recognition, reading the stream address from a page
+  in the way real pages hold it, waiting until the playlist answers, stop, error messages).
+- The real webinar page you tried was read correctly (stream address found, name "webinar <number>"); its stream answered "not on air" because
+  that webinar had ended, which is what makes the recorder wait.
+- **Not tested yet:** a live broadcast of this kind, a clean second PC, Windows 10, screen scaling above 100 %. See the 9.21 notes.
+
+Everything else is as in 9.21: install steps, `README.txt` / `README_RU.txt`, limits (no copy-protected video, no CAPTCHA login, Windows 10/11
+64-bit only), licence MIT with third-party notices.

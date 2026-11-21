@@ -41,7 +41,7 @@ class TextHandling(unittest.TestCase):
 
     def test_status_messages_never_name_a_missing_placeholder(self):
         say("en", "scan_reading", i=3, n=13); say("ru", "scan_reading", i=3, n=13)
-        say("en", "room_low_disk", gb="2.0"); say("ru", "room_low_disk", gb="2.0")
+        say("en", "room_low_disk", gb="2.0", h=1); say("ru", "room_low_disk", gb="2.0", h=1)
 
     def test_russian_header_status_is_short(self):
         self.assertLessEqual(len(vd.T["ru"]["ready"]), 8)       # it was clipped at the minimum window size

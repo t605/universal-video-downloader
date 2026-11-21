@@ -1,0 +1,39 @@
+# Universal Video Downloader 9.25 - live school webinars, final fixes
+
+**New since 9.23:** the button "Record a webinar room" records a **live broadcast** of a school's own webinar page (the web address contains
+`/pl/webinar/show`), and also a pre-recorded "auto-webinar". Paste the link, press "Start recording", keep the computer on; when the broadcast
+ends the program makes an MP4. **Start BEFORE the webinar:** a live broadcast gives only the last minute or two of picture, so the
+recording starts when you press the button (plus a little before).
+
+**School without a password:** a new button on the room page ("The school asks for a name and e-mail? Enter the room here...") fills in the
+school's own entry form. Your name and e-mail are not saved, only the school's cookies, in a **separate file**, so it never replaces a saved
+password login (fixed in 9.25 after the release test). A login file from the browser (README, Option B) works too.
+
+**Fixed:** (9.24) the false warning "the length of the video does not match" - the program now measures the real length of the `.ts` working
+file; the check also gets more time for very big files (9.25). (9.25) the message for a page that needs a login now also points to the
+"name and e-mail" button.
+
+Version 9.25 includes 9.22-9.24. Install this Setup over the older one: settings, logins and downloads stay.
+
+*Built with Claude Code: the rules and decisions are the owner's, the program code was written with Claude Code.*
+
+## Files
+
+| File | Size | SHA-256 |
+|---|---|---|
+| UniversalVideoDownloader-Setup.exe (recommended) | 51.5 MB | `A2FBA8AA42758AE5D7BFAF26497AE87911CA074AE2F983AFAD085718E935A3F0` |
+| UniversalVideoDownloader.zip (alternative: a `.bat` launcher) | 0.1 MB | `B1BAF226DCFD84BBEF4F0341EC82E43D9C3B6090DB5840089FFC575A4827924A` |
+
+## Tested
+
+- 129 automated offline tests pass (34 room, 13 audio, 22 login, 8 scan, 7 engine, 7 further, 38 webinar pages and entry form).
+- **Three real live school webinars were recorded** (two of them checked in full: every frame decoded start to end, 0 errors, no gaps,
+  picture and sound in step, decoded content identical to the `.ts` working file; the third MP4, 3 h 08 min, also decoded with 0 errors).
+  Playing the picture and listening to the sound was not part of those checks.
+- The Setup installs (1194 files, exit code 0) and the program opens within seconds.
+- A short release test (code review, Reality Checker) found no blocker; its one real finding (entry overwrote a password login) is fixed.
+- **Not tested:** the "name and e-mail" button on a real school (only a made-up school), a clean second PC, Windows 10, screen scaling
+  above 100 %, how long a saved school login stays valid (the school decides). `README_RU.txt` does not describe the new button.
+
+Everything else is as in 9.21: install steps, limits (no copy-protected video, no CAPTCHA login, Windows 10/11 64-bit only), licence MIT
+with third-party notices.
