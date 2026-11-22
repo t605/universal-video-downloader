@@ -39,7 +39,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 
 APP_NAME = "Universal Video Downloader"
-APP_VER  = "9.28"
+APP_VER  = "9.29"
 
 # Under pythonw (no console) sys.stdout/stderr are None, and anything that
 # prints would crash. Send that output to a log file instead (fresh each start).
@@ -187,14 +187,14 @@ except ImportError:
 #  3.  CONSTANTS
 # ══════════════════════════════════════════════════════════════
 # Light, high-contrast colours: the main user is in her late seventies, and dark
-# text on a light background is easier to read than the reverse. Green is the
-# one button to press; red is only used for problems.
-C = dict(bg="#F7F6F2", panel="#FFFFFF", panel2="#E4E1D8", border="#B4B2A9",
-         header="#2C2C2A", text="#1F1F1D", muted="#55534E",
-         blue="#185FA5", green="#3B6D11", green_text="#27500A", red="#A32D2D",
-         orange="#854F0B", soft_blue="#E6F1FB", disabled="#9A988F",
-         pill_ok="#97C459", pill_warn="#EF9F27",
-         btn_border="#767570", btn_dis="#8A8880")      # secondary buttons: white, dark edge (4.3:1 on the page)
+# text on a light background is easier to read than the reverse. Blue is the
+# one button to press (Fluent 2 style since 9.29); green only means success; red is only used for problems.
+C = dict(bg="#F3F6FA", panel="#FFFFFF", panel2="#E9EFF7", nav="#E9EFF7", border="#7D8999",
+         header="#FFFFFF", text="#1B1B1B", muted="#4A5260",
+         blue="#0F6CBD", green="#107C10", green_text="#0B5E0B", red="#A4262C",
+         orange="#7A4A00", soft_blue="#E3EFFB", disabled="#D9DFE7",
+         pill_ok="#0B5E0B", pill_ok_bg="#DFF6DD", pill_warn="#7A4A00", pill_warn_bg="#FFF4CE",
+         btn_border="#7D8999", btn_dis="#8A8F98")      # Fluent 2 look: the ONE main button is blue; green only means "done"
 UI = "Segoe UI" if sys.platform == "win32" else "Helvetica"
 
 FORMAT_MERGE  = ("bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/"
@@ -376,7 +376,7 @@ def _btn(parent, text, cmd, bg, fg="#FFFFFF", font=(UI, 12), **kw):
         b = tk.Button(parent, text=text, command=cmd, bg="#FFFFFF", fg=fg if fg != "#FFFFFF" else C["text"],
                       font=font, relief=tk.SOLID, bd=1, cursor="hand2", disabledforeground=C["btn_dis"],
                       activebackground=C["soft_blue"], activeforeground=C["text"],
-                      highlightthickness=0, **kw)      # SOLID = a crisp black 1 px edge (Tk draws no coloured ring on a button)
+                      highlightthickness=2, highlightbackground="#FFFFFF", highlightcolor=C["blue"], **kw)      # SOLID = a crisp black 1 px edge (Tk draws no coloured ring on a button)
         b._bg = "#FFFFFF"
         def _on(_=None):
             if b["state"] != tk.DISABLED: b.config(bg=C["soft_blue"])
@@ -385,8 +385,9 @@ def _btn(parent, text, cmd, bg, fg="#FFFFFF", font=(UI, 12), **kw):
         b.bind("<FocusIn>", _on); b.bind("<FocusOut>", _off)
         return b
     b = tk.Button(parent, text=text, command=cmd, bg=bg, fg=fg, font=font,
-                  relief=tk.FLAT, bd=0, cursor="hand2", disabledforeground="#F2F1EC",
-                  activebackground=_darken(bg), activeforeground=fg, **kw)
+                  relief=tk.FLAT, bd=0, cursor="hand2", disabledforeground="#55606F",
+                  activebackground=_darken(bg), activeforeground=fg,
+                  highlightthickness=2, highlightbackground=bg, highlightcolor="#1B1B1B", **kw)
     b._bg = bg
     b.bind("<Enter>", lambda _: b["state"] != tk.DISABLED and b.config(bg=_darken(b._bg)))
     b.bind("<Leave>", lambda _: b.config(bg=b._bg))
@@ -394,11 +395,11 @@ def _btn(parent, text, cmd, bg, fg="#FFFFFF", font=(UI, 12), **kw):
 
 def _recolor(b, bg):
     b._bg = bg
-    b.config(bg=bg, activebackground=_darken(bg))
+    b.config(bg=bg, activebackground=_darken(bg), highlightbackground=bg)
 
 def _cardf(parent, bg=None):
-    return tk.Frame(parent, bg=bg or C["panel"], highlightthickness=1,
-                    highlightbackground=C["border"])
+    return tk.Frame(parent, bg=bg or C["panel"], highlightthickness=2,
+                    highlightbackground=C["border"], highlightcolor=C["blue"])
 
 def _dur(s):
     if not s: return ""
@@ -2117,12 +2118,17 @@ T = {
     st_done_audio="Done! The sound is saved as an MP3 file.",
     saved_in="Videos are saved in:", downloads_folder="Downloads",
     open_folder="Open folder", change="Change", pick_folder="Where should videos be saved?",
-    more="More:", nav_scan="Several videos on one page", nav_cookies="Log in to websites",
+    more="More:", nav_i_main="Download video", nav_i_scan="Several videos", nav_i_room="Record a webinar",
+    nav_i_cookies="Log in to websites", nav_i_details="Details for helper", nav_scan="Several videos on one page", nav_cookies="Log in to websites",
     nav_details="Details for helper", back="←  Back",
     checking="Checking the link...", found="Found: {title}",
     n_videos="{n} videos on this page — all will be downloaded",
-    st_ready="Ready. Copy a video's address and press “Paste link”.",
-    st_link_ok="The link is fine. Press the green button “{btn}”.",
+    st_ready="Copy a video's address and press “Paste link”.",
+    st_ready_scan="Paste the address of the page with the videos and press “Find videos”.",
+    st_ready_room="Paste the webinar link and press “Start recording” BEFORE the webinar begins.",
+    st_ready_cookies="To download private videos, log in to the website here, once.",
+    st_ready_details="For the person who helps: what works, the versions and the log.",
+    st_link_ok="The link is fine. Press the blue button “{btn}”.",
     st_starting="Starting...", st_downloading="Downloading...  {pct}%",
     st_downloading_nopct="Downloading...", st_batch="Video {i} of {n}:  {pct}%",
     st_finishing="Almost done — putting the video together...",
@@ -2134,12 +2140,12 @@ T = {
     st_converted="Done! The MP4 file is saved next to the original.",
     st_conv_failed="The conversion did not work. The original file is untouched.",
     nav_room="Record a webinar room", room_title="Record a webinar room",
-    room_help="Paste the link of a webinar room (the address contains /room/ or /pl/webinar/show) and "
-              "press “Start recording” BEFORE the webinar begins. If the broadcast is already on air, its "
-              "beginning cannot be recorded live; for VK the program then waits after the end (up to 4 hours) "
-              "for VK's own full recording. Keep this window open and do not let the computer go to sleep "
-              "until it says Done (plugged in, laptop lid open). Plan about 1 GB of free disk space per hour. Before the broadcast starts, "
-              "“Stop and save” cancels; later it saves what is recorded.",
+    room_help="1. Paste the link of a webinar room (the address contains /room/ or /pl/webinar/show).\n"
+              "2. Press “Start recording” BEFORE the webinar begins.\n"
+              "3. Keep this window open and do not let the computer go to sleep until it says Done (plugged in, laptop lid open). "
+              "Plan about 1 GB of free disk space per hour.\n"
+              "If the broadcast is already on air, its beginning cannot be recorded live; for VK the program then waits after the end "
+              "(up to 4 hours) for VK's own full recording. Before the broadcast starts, “Stop and save” cancels; later it saves what is recorded.",
     room_start="Start recording", room_stop="Stop and save", recording="Recording...",
     st_room_signin="Entering the webinar room...",
     st_room_wait="Waiting for the broadcast to begin. Keep this window open.",
@@ -2262,7 +2268,7 @@ T = {
     find="Find videos", looking="Looking...",
     open_list="Open list file...", list_pick="Choose a .txt or .json file with video links",
     list_loaded="Loaded {n} links from the file. Untick any you don't want, then press "
-                "the green button.",
+                "the blue button.",
     list_empty="No web addresses found in that file.",
     scan_list_hdr="Videos found — click a line to tick or untick it",
     tick_all="Tick all", untick_all="Untick all",
@@ -2271,7 +2277,7 @@ T = {
               "“Log in to websites” and try again.",
     scan_front="This is the website's front page. Open the lesson or channel you want "
                "and copy that address.",
-    scan_found="Found {n} videos. Untick any you don't want, then press the green button. They will be saved in: {folder}.",
+    scan_found="Found {n} videos. Untick any you don't want, then press the blue button. They will be saved in: {folder}.",
     scan_reading="Reading lesson {i} of {n}...",
     room_low_disk="Only {gb} GB are free on the drive where videos are saved. That is enough for about {h} h of webinar (the recording, and then the MP4). If the webinar is longer, press No and free some space. Record anyway?",
     no_page="First copy the page's address, then press “Paste link”.",
@@ -2299,8 +2305,8 @@ T = {
     login_email="E-mail or username:", login_pass="Password:",
     login_show="Show the password", login_go="Log in", login_cancel="Cancel",
     login_busy="Logging in - this can take up to about a minute. Please wait...",
-    login_ok="Logged in to {host}. For one video, press the green “Download video” button. For a whole course, open “Several videos on one page”.",
-    login_ok_unchecked="Logged in to {host}, but the lesson page could not be opened to check it. Try it: one video - the green “Download video” button; a whole course - “Several videos on one page”.",
+    login_ok="Logged in to {host}. For one video, press the blue “Download video” button. For a whole course, open “Several videos on one page”.",
+    login_ok_unchecked="Logged in to {host}, but the lesson page could not be opened to check it. Try it: one video - the blue “Download video” button; a whole course - “Several videos on one page”.",
     login_err_empty="Fill in the web address (it starts with https://), the e-mail or username, "
                     "and the password.",
     login_err_https="The web address must start with https:// - the password is never sent "
@@ -2349,12 +2355,17 @@ T = {
     st_done_audio="Готово! Звук сохранён в файл MP3.",
     saved_in="Видео сохраняются в папку:", downloads_folder="Загрузки",
     open_folder="Открыть папку", change="Изменить", pick_folder="Куда сохранять видео?",
-    more="Ещё:", nav_scan="Несколько видео на странице", nav_cookies="Вход на сайты",
+    more="Ещё:", nav_i_main="Скачать видео", nav_i_scan="Несколько видео", nav_i_room="Записать вебинар",
+    nav_i_cookies="Вход на сайты", nav_i_details="Для помощника", nav_scan="Несколько видео на странице", nav_cookies="Вход на сайты",
     nav_details="Для помощника", back="←  Назад",
     checking="Проверяю ссылку...", found="Найдено: {title}",
     n_videos="Видео на странице: {n} — скачаются все",
-    st_ready="Готово. Скопируйте адрес видео и нажмите «Вставить ссылку».",
-    st_link_ok="Ссылка в порядке. Нажмите зелёную кнопку «{btn}».",
+    st_ready="Скопируйте адрес видео и нажмите «Вставить ссылку».",
+    st_ready_scan="Вставьте адрес страницы с видео и нажмите «Найти видео».",
+    st_ready_room="Вставьте ссылку на вебинар и нажмите «Начать запись» ДО начала вебинара.",
+    st_ready_cookies="Чтобы скачивать закрытые видео, один раз войдите здесь на сайт.",
+    st_ready_details="Для помощника: что работает, версии и журнал.",
+    st_link_ok="Ссылка в порядке. Нажмите синюю кнопку «{btn}».",
     st_starting="Начинаю...", st_downloading="Скачиваю...  {pct}%",
     st_downloading_nopct="Скачиваю...", st_batch="Видео {i} из {n}:  {pct}%",
     st_finishing="Почти готово — собираю видео...",
@@ -2366,12 +2377,12 @@ T = {
     st_converted="Готово! Файл MP4 сохранён рядом с исходным.",
     st_conv_failed="Преобразовать не получилось. Исходный файл не тронут.",
     nav_room="Записать вебинарную комнату", room_title="Записать вебинарную комнату",
-    room_help="Вставьте ссылку на вебинарную комнату (в адресе есть /room/ или /pl/webinar/show) и "
-              "нажмите «Начать запись» ДО начала вебинара. Если эфир уже идёт, начало вживую записать "
-              "нельзя; для VK программа тогда после конца эфира ждёт (не дольше 4 часов) полную запись "
-              "от самого VK. Не закрывайте окно и не давайте компьютеру заснуть (ноутбук включите в розетку, крышку не закрывайте), пока не появится "
-              "«Готово». На каждый час вебинара нужно около 1 ГБ места на диске. Пока эфир не начался, кнопка "
-              "«Остановить и сохранить» отменяет запись; потом она сохраняет записанное.",
+    room_help="1. Вставьте ссылку на вебинар (в адресе есть /room/ или /pl/webinar/show).\n"
+              "2. Нажмите «Начать запись» ДО начала вебинара.\n"
+              "3. Не закрывайте окно и не давайте компьютеру заснуть (ноутбук включите в розетку, крышку не закрывайте), пока не появится "
+              "«Готово». На каждый час вебинара нужно около 1 ГБ места на диске.\n"
+              "Если эфир уже идёт, начало вживую записать нельзя; для VK программа после конца эфира ждёт полную запись от VK (до 4 часов). "
+              "До начала эфира «Остановить и сохранить» отменяет запись, потом сохраняет записанное.",
     room_start="Начать запись", room_stop="Остановить и сохранить", recording="Запись...",
     st_room_signin="Захожу в комнату вебинара...",
     st_room_wait="Жду начала трансляции. Не закрывайте это окно.",
@@ -2497,7 +2508,7 @@ T = {
     find="Найти видео", looking="Ищу...",
     open_list="Открыть список...", list_pick="Выберите файл .txt или .json со ссылками на видео",
     list_loaded="Загружено ссылок из файла: {n}. Снимите отметку с ненужных и нажмите "
-                "зелёную кнопку.",
+                "синюю кнопку.",
     list_empty="В этом файле не найдено ни одного адреса.",
     scan_list_hdr="Найденные видео — щёлкните по строке, чтобы отметить или снять отметку",
     tick_all="Отметить все", untick_all="Снять все",
@@ -2506,7 +2517,7 @@ T = {
               "«Вход на сайты» и попробуйте снова.",
     scan_front="Это главная страница сайта. Откройте нужный урок или канал и "
                "скопируйте его адрес.",
-    scan_found="Найдено видео: {n}. Снимите отметку с ненужных и нажмите зелёную кнопку. Они будут сохранены в папку: {folder}.",
+    scan_found="Найдено видео: {n}. Снимите отметку с ненужных и нажмите синюю кнопку. Они будут сохранены в папку: {folder}.",
     scan_reading="Читаю урок {i} из {n}...",
     room_low_disk="На диске, куда сохраняются видео, свободно только {gb} ГБ. Этого хватит примерно на {h} ч вебинара (запись, а потом MP4). Если вебинар длиннее, нажмите «Нет» и освободите место. Всё равно записывать?",
     no_page="Сначала скопируйте адрес страницы и нажмите «Вставить ссылку».",
@@ -2533,8 +2544,8 @@ T = {
     login_email="Электронная почта или логин:", login_pass="Пароль:",
     login_show="Показать пароль", login_go="Войти", login_cancel="Отмена",
     login_busy="Выполняется вход - это может занять до минуты. Подождите...",
-    login_ok="Вход на {host} выполнен. Для одного видео нажмите зелёную кнопку «Скачать видео». Для всего курса откройте «Несколько видео на странице».",
-    login_ok_unchecked="Вход на {host} выполнен, но страницу урока не удалось открыть для проверки. Попробуйте: одно видео — зелёная кнопка «Скачать видео»; весь курс — «Несколько видео на странице».",
+    login_ok="Вход на {host} выполнен. Для одного видео нажмите синюю кнопку «Скачать видео». Для всего курса откройте «Несколько видео на странице».",
+    login_ok_unchecked="Вход на {host} выполнен, но страницу урока не удалось открыть для проверки. Попробуйте: одно видео — синяя кнопка «Скачать видео»; весь курс — «Несколько видео на странице».",
     login_err_empty="Заполните адрес (он начинается с https://), электронную почту или логин и пароль.",
     login_err_https="Адрес должен начинаться с https:// — пароль никогда не отправляется по незащищённому соединению.",
     login_err_address="Этот адрес выглядит неправильно (в нём есть знак @ или пробел). Скопируйте его заново из адресной строки браузера.",
@@ -2604,7 +2615,7 @@ class CheckListbox(tk.Frame):
                          highlightbackground=C["border"], **kw)
         self._items = items
         self._lb = tk.Listbox(self, font=(UI, 13), bg=C["panel"], fg=C["text"],
-                              selectmode=tk.BROWSE, selectbackground=C["soft_blue"],
+                              selectmode=tk.BROWSE, selectbackground="#C7E0F4",
                               selectforeground=C["text"], activestyle="none",
                               relief=tk.FLAT, bd=0, height=4)
         self._lb.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=8, pady=6)
@@ -2650,7 +2661,7 @@ class CheckListbox(tk.Frame):
 # ══════════════════════════════════════════════════════════════
 #  7.  APPLICATION
 #  One simple main screen for the user; everything else is a page reached
-#  from the links at the bottom. Big text, light colours, one green button.
+#  from the menu on the left. Big text, light colours, one blue button.
 # ══════════════════════════════════════════════════════════════
 class App(tk.Tk):
 
@@ -2670,11 +2681,12 @@ class App(tk.Tk):
         self._lang = default_lang()
 
         s = self.winfo_fpixels("1i") / 96.0          # 1.0 at 100 %, 1.5 at 150 %
+        self._sc = s
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
         # 840 high: the Russian "Record a webinar room" page needs about 780 px at this width (measured 2026-11-20)
-        w, h = min(int(1000 * s), sw - 40), min(int(840 * s), sh - 90)
+        w, h = min(int(1120 * s), sw - 40), min(int(840 * s), sh - 90)
         self.geometry(f"{w}x{h}+{max(0, (sw - w) // 2)}+{max(0, (sh - h) // 3)}")
-        self.minsize(min(int(820 * s), sw - 40), min(int(840 * s), sh - 90))
+        self.minsize(min(int(1000 * s), sw - 40), min(int(840 * s), sh - 90))
         self.configure(bg=C["bg"])
 
         # Window / taskbar icon
@@ -2776,21 +2788,28 @@ class App(tk.Tk):
 
     def _build(self):
         self.title(self.t("app_title"))
-        self.grid_rowconfigure(1, weight=1)
+        self.grid_rowconfigure(2, weight=1)
         self.grid_columnconfigure(0, weight=1)
         self._style()
 
         self._header().grid(row=0, column=0, sticky="ew")
-        self._body = tk.Frame(self, bg=C["bg"])
-        self._body.grid(row=1, column=0, sticky="nsew", padx=24, pady=(16, 8))
+        tk.Frame(self, height=1, bg=C["border"]).grid(row=1, column=0, sticky="ew")
+        mid = tk.Frame(self, bg=C["bg"])
+        mid.grid(row=2, column=0, sticky="nsew")
+        mid.grid_columnconfigure(1, weight=1); mid.grid_rowconfigure(0, weight=1)
+        self._nav(mid).grid(row=0, column=0, sticky="ns")
+        content = tk.Frame(mid, bg=C["bg"])
+        content.grid(row=0, column=1, sticky="nsew")
+        content.grid_rowconfigure(0, weight=1); content.grid_columnconfigure(0, weight=1)
+        self._body = tk.Frame(content, bg=C["bg"])
+        self._body.grid(row=0, column=0, sticky="nsew", padx=24, pady=(16, 8))
         self._body.grid_rowconfigure(0, weight=1); self._body.grid_columnconfigure(0, weight=1)
         self._pages = {"main": self._page_main(), "scan": self._page_scan(),
                        "room": self._page_room(),
                        "cookies": self._page_cookies(), "details": self._page_details()}
         for f in self._pages.values():
             f.grid(row=0, column=0, sticky="nsew")
-        self._statuspanel().grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 10))
-        self._footer().grid(row=3, column=0, sticky="ew")
+        self._statuspanel(content).grid(row=1, column=0, sticky="ew", padx=24, pady=(0, 16))
 
         # Re-show everything that was on screen before a rebuild
         for text, tag in self._log_lines:
@@ -2805,8 +2824,8 @@ class App(tk.Tk):
     def _style(self):
         st = ttk.Style(); st.theme_use("clam")
         st.configure("Big.Horizontal.TProgressbar", troughcolor=C["panel2"],
-                     background=C["green"], darkcolor=C["green"], lightcolor=C["green"],
-                     bordercolor=C["border"], thickness=22)
+                     background=C["blue"], darkcolor=C["blue"], lightcolor=C["blue"],
+                     bordercolor=C["border"], thickness=8)
         st.configure("D.TCombobox", fieldbackground=C["panel"], background=C["panel2"],
                      foreground=C["text"], arrowcolor=C["text"])
         self.option_add("*TCombobox*Listbox.font", (UI, 12))
@@ -2826,51 +2845,103 @@ class App(tk.Tk):
         # and the label renders blank.
         self._logo_img = _logo_image(LOGO_HEADER_B64)
         if self._logo_img is not None:
-            tk.Label(h, image=self._logo_img, bg=C["header"], bd=0
-                     ).pack(side=tk.LEFT, padx=(16, 10), pady=8)
-        tk.Label(h, text=self.t("app_title"), font=(UI, 20, "bold"), fg="#FFFFFF",
+            # The logo artwork is white on transparent (made for a dark background): it sits on its own black tile,
+            # as the original logo is drawn; the artwork itself is not changed, only placed.
+            tk.Label(h, image=self._logo_img, bg="#000000", bd=0, padx=6, pady=4
+                     ).pack(side=tk.LEFT, padx=(20, 14), pady=8)
+        tk.Label(h, text=self.t("app_title"), font=(UI, 18, "bold"), fg=C["text"],
                  bg=C["header"]).pack(side=tk.LEFT, padx=(0 if self._logo_img else 20, 0),
                                        pady=12)
-        _btn(h, self.t("lang_switch"), self._switch_lang, bg="#4A4945", fg="#FFFFFF",
-             font=(UI, 12)).pack(side=tk.RIGHT, padx=(8, 16), ipadx=12, ipady=4)
-        self._pill = tk.Label(h, text="", font=(UI, 13, "bold"), bg=C["header"],
-                              fg=C["pill_ok"], cursor="hand2")
+        _btn(h, self.t("lang_switch"), self._switch_lang, bg=C["panel2"], fg=C["text"],
+             font=(UI, 12)).pack(side=tk.RIGHT, padx=(8, 20), ipadx=12, ipady=4)
+        self._pill = tk.Label(h, text="", font=(UI, 13, "bold"), bg=C["pill_ok_bg"],
+                              fg=C["pill_ok"], cursor="hand2", padx=14, pady=5)
         self._pill.pack(side=tk.RIGHT, padx=10)
         self._pill.bind("<Button-1>", lambda _: self._show("details"))
-        self._pill.config(takefocus=1, highlightthickness=2, highlightbackground=C["header"], highlightcolor="#FFFFFF")
+        self._pill.config(takefocus=1, highlightthickness=2, highlightbackground=C["header"], highlightcolor=C["blue"])
         for k in ("<Return>", "<space>"):
             self._pill.bind(k, lambda _: self._show("details"))
+        self._pill.lower()                         # Tab order follows the picture: the pill comes before the language button
         return h
 
-    def _footer(self):
-        f = tk.Frame(self, bg=C["panel2"])
-        tk.Label(f, text=self.t("more"), font=(UI, 12), fg=C["muted"], bg=C["panel2"]
-                 ).pack(side=tk.LEFT, padx=(16, 2), pady=10)
-        for key, page in (("nav_scan", "scan"), ("nav_room", "room"),
-                          ("nav_cookies", "cookies"), ("nav_details", "details")):
-            l = tk.Label(f, text=self.t(key), font=(UI, 12), fg=C["blue"], bg="#FFFFFF",
-                         cursor="hand2", takefocus=1, highlightthickness=2, padx=6, pady=3,
-                         highlightbackground=C["btn_border"], highlightcolor=C["blue"])
-            l.pack(side=tk.LEFT, padx=4, pady=6)
-            def _on(_, w=l): w.config(bg=C["soft_blue"], highlightbackground=C["blue"])
-            def _off(_, w=l): w.config(bg="#FFFFFF", highlightbackground=C["btn_border"])
-            for ev, fn in (("<Enter>", _on), ("<Leave>", _off), ("<FocusIn>", _on), ("<FocusOut>", _off)):
-                l.bind(ev, fn)
-            l.bind("<Button-1>", lambda _, pg=page: self._show(pg))
-            for k in ("<Return>", "<space>"):               # Tab reaches the link, Enter / Space opens it
-                l.bind(k, lambda _, pg=page: self._show(pg))
-        return f
+    # The five pages, in the left menu: (page, text key, icon glyph of Segoe Fluent Icons / Segoe MDL2 Assets)
+    NAV_PAGES = (("main", "nav_i_main", "\uE896"), ("scan", "nav_i_scan", "\uE8A9"), ("room", "nav_i_room", "\uE714"),
+                 ("cookies", "nav_i_cookies", "\uE774"), ("details", "nav_i_details", "\uE897"))
+
+    def _nav(self, parent):
+        """The left menu: icon + name per page, the open page is marked by a bar, a white row and bold blue text
+        (not by colour alone). Tab reaches every row, Enter / Space opens it."""
+        import tkinter.font as tkfont
+        fams = set(tkfont.families(self))
+        icon_font = next((f for f in ("Segoe Fluent Icons", "Segoe MDL2 Assets") if f in fams), "")
+        nav = tk.Frame(parent, bg=C["nav"], width=int(236 * self._sc))
+        nav.pack_propagate(False)
+        self._nav_rows = {}
+        for n, (page, key, glyph) in enumerate(self.NAV_PAGES):
+            row = tk.Frame(nav, bg=C["nav"], cursor="hand2", takefocus=1, highlightthickness=2,
+                           highlightbackground=C["nav"], highlightcolor=C["blue"])
+            row.pack(fill=tk.X, padx=10, pady=(14 if n == 0 else 2, 2))
+            bar = tk.Frame(row, width=4, bg=C["nav"])
+            bar.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8), pady=8)
+            ic = None
+            if icon_font:
+                ic = tk.Label(row, text=glyph, font=(icon_font, 16), bg=C["nav"], fg=C["text"], width=2)
+                ic.pack(side=tk.LEFT)
+            tx = tk.Label(row, text=self.t(key), font=(UI, 13), anchor=tk.W, justify=tk.LEFT,
+                          wraplength=int(150 * self._sc), bg=C["nav"], fg=C["text"])
+            tx.pack(side=tk.LEFT, fill=tk.X, expand=True, pady=10)
+            self._nav_rows[page] = (row, bar, ic, tx)
+            for w in (row, bar, ic, tx):
+                if w is None:
+                    continue
+                w.bind("<Button-1>", lambda _, pg=page: self._show(pg))
+                w.bind("<Enter>", lambda _, pg=page: self._nav_paint(pg, True))
+                w.bind("<Leave>", lambda _, pg=page: self._nav_paint(pg, False))
+            for k in ("<Return>", "<space>"):
+                row.bind(k, lambda _, pg=page: self._show(pg))
+        return nav
+
+    def _nav_paint(self, page, hover=False):
+        row, bar, ic, tx = self._nav_rows[page]
+        sel = page == self._page
+        bg = C["panel"] if sel else ("#D6E2F0" if hover else C["nav"])
+        row.config(bg=bg, highlightbackground=bg)
+        bar.config(bg=C["blue"] if sel else bg)
+        if ic is not None:
+            ic.config(bg=bg, fg=C["blue"] if sel else C["text"])
+        tx.config(bg=bg, fg=C["blue"] if sel else C["text"], font=(UI, 13, "bold") if sel else (UI, 13))
+
+    def _nav_refresh(self):
+        for pg in self._nav_rows:
+            self._nav_paint(pg)
+
+    READY_KEYS = {"main": "st_ready", "scan": "st_ready_scan", "room": "st_ready_room",
+                  "cookies": "st_ready_cookies", "details": "st_ready_details"}
+
+    def _idle_key(self):
+        """The calm message of the open page (each page says what to do there)."""
+        return self.READY_KEYS.get(getattr(self, "_page", "main"), "st_ready")
 
     def _show(self, name):
         self._page = name
+        for pg, f in self._pages.items():
+            if pg != name:
+                f.grid_remove()                    # a page that is only covered still takes Tab focus
+        self._pages[name].grid()
         self._pages[name].tkraise()
+        self._nav_refresh()
+        try:
+            self.title(self.t("app_title") + " - " + self.t(dict((a, b) for a, b, _ in self.NAV_PAGES)[name]))
+        except Exception:
+            pass
+        kind, key, action, kw = self._status_state
+        if kind == "idle" and key in self.READY_KEYS.values() and key != self._idle_key():
+            self._set_status("idle", self._idle_key())
 
     def _page_top(self, parent, title_key):
-        """'<- Back' and the page title on one row (saves height on small screens)."""
+        """The page title (the left menu replaces the old "Back" button)."""
         f = tk.Frame(parent, bg=C["bg"])
-        _btn(f, self.t("back"), lambda: self._show("main"), bg=C["panel2"], fg=C["text"],
-             font=(UI, 13, "bold")).pack(side=tk.LEFT, ipadx=10, ipady=3)
-        self._label(f, self.t(title_key), 17, True).pack(side=tk.LEFT, padx=(16, 0))
+        self._label(f, self.t(title_key), 22, True).pack(side=tk.LEFT)
         return f
 
     def _entry(self, parent, var, on_return):
@@ -2903,7 +2974,9 @@ class App(tk.Tk):
                 self._set_status("idle", "st_link_ok", btn=self._dl_text())
 
     def _page_main(self):
-        p = tk.Frame(self._body, bg=C["bg"]); p.grid_columnconfigure(0, weight=1)
+        outer = tk.Frame(self._body, bg=C["bg"]); outer.grid_columnconfigure(0, weight=1)
+        self._page_top(outer, "nav_i_main").grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        p = tk.Frame(outer, bg=C["bg"]); p.grid(row=1, column=0, sticky="nsew"); p.grid_columnconfigure(0, weight=1)
 
         self._label(p, self.t("step1"), 15, True, wrap=True).grid(row=0, column=0,
                                                                    sticky="ew")
@@ -2929,7 +3002,7 @@ class App(tk.Tk):
                            anchor="w")
             rb.pack(side=tk.LEFT, padx=(0, 24)); self._mode_radios.append(rb)
         self._dl_btn = _btn(p, "⬇   " + self._dl_text(), self._start_download,
-                            bg=C["green"], font=(UI, 22, "bold"))
+                            bg=C["blue"], font=(UI, 22, "bold"))
         self._dl_btn.grid(row=4, column=0, sticky="ew", ipady=12)
 
         fr = tk.Frame(p, bg=C["bg"]); fr.grid(row=5, column=0, sticky="ew", pady=(12, 0))
@@ -2950,7 +3023,7 @@ class App(tk.Tk):
         self._conv_btn = _btn(cv, self.t("convert"), self._convert_mp4, bg=C["panel2"],
                               fg=C["text"], font=(UI, 12))
         self._conv_btn.grid(row=0, column=1, padx=(8, 0), ipadx=10, ipady=4)
-        return p
+        return outer
 
     # ── WEBINAR ROOM PAGE ──────────────────────────────────────────────────
 
@@ -2968,12 +3041,12 @@ class App(tk.Tk):
         self._label(p, self.t("page_video_only"), 13, fg=C["muted"], wrap=True
                     ).grid(row=6, column=0, sticky="ew", pady=(14, 0))
         self._room_btn = _btn(p, "●   " + self.t("room_start"), self._start_room,
-                              bg=C["green"], font=(UI, 20, "bold"))
-        self._room_btn.grid(row=3, column=0, sticky="ew", pady=(14, 0), ipady=10)
+                              bg=C["blue"], font=(UI, 20, "bold"))
+        self._room_btn.grid(row=3, column=0, sticky="ew", pady=(12, 0), ipady=6)
         self._room_stop_btn = _btn(p, "■   " + self.t("room_stop"), self._stop_room,
                                    bg=C["disabled"], font=(UI, 16, "bold"))
         self._room_stop_btn.config(state=tk.DISABLED)
-        self._room_stop_btn.grid(row=4, column=0, sticky="ew", pady=(10, 0), ipady=6)
+        self._room_stop_btn.grid(row=4, column=0, sticky="ew", pady=(8, 0), ipady=3)
         _btn(p, self.t("enter_btn"), self._open_enter_room, bg=C["panel2"], fg=C["text"],
              font=(UI, 12)).grid(row=5, column=0, sticky="w", pady=(14, 0), ipadx=12, ipady=4)
         return p
@@ -2981,7 +3054,7 @@ class App(tk.Tk):
     def _room_buttons(self, busy):
         """Start only when idle; Stop only while waiting for / recording a room."""
         stop_on = busy and self._room_active
-        _recolor(self._room_btn, C["disabled"] if busy else C["green"])
+        _recolor(self._room_btn, C["disabled"] if busy else C["blue"])
         self._room_btn.config(state=tk.DISABLED if busy else tk.NORMAL)
         _recolor(self._room_stop_btn, C["red"] if stop_on else C["disabled"])
         self._room_stop_btn.config(state=tk.NORMAL if stop_on else tk.DISABLED)
@@ -3014,7 +3087,7 @@ class App(tk.Tk):
         hdr.grid_columnconfigure(0, weight=1)     # the hint wraps; the buttons never move
         self._label(hdr, self.t("scan_list_hdr"), 12, fg=C["muted"], wrap=True
                     ).grid(row=0, column=0, sticky="ew")
-        _btn(hdr, self.t("open_list"), self._open_list, bg=C["blue"], font=(UI, 11, "bold")
+        _btn(hdr, self.t("open_list"), self._open_list, bg=C["panel2"], fg=C["text"], font=(UI, 11)
              ).grid(row=0, column=1, padx=(8, 12), ipadx=8, ipady=2)
         _btn(hdr, self.t("tick_all"), lambda: self._scan_list.select_all(True),
              bg=C["panel2"], fg=C["text"], font=(UI, 11)
@@ -3027,7 +3100,7 @@ class App(tk.Tk):
         p.grid_rowconfigure(6, weight=1, minsize=80)   # at least two rows visible
 
         self._dl_sel_btn = _btn(p, "⬇   " + self.t("dl_ticked"), self._download_selected,
-                                bg=C["green"], font=(UI, 18, "bold"))
+                                bg=C["blue"], font=(UI, 18, "bold"))
         self._dl_sel_btn.grid(row=7, column=0, sticky="ew", pady=(10, 0), ipady=10)
         return p
 
@@ -3039,7 +3112,7 @@ class App(tk.Tk):
         self._page_top(p, "ck_title").grid(row=0, column=0, sticky="ew", pady=(0, 6))
         lb = tk.Frame(p, bg=C["bg"]); lb.grid(row=1, column=0, sticky="ew", pady=(0, 4))
         lb.grid_columnconfigure(0, weight=1)
-        _btn(lb, self.t("login_btn"), self._open_login, bg=C["green"], font=(UI, 13, "bold")
+        _btn(lb, self.t("login_btn"), self._open_login, bg=C["blue"], font=(UI, 13, "bold")
              ).grid(row=0, column=0, sticky="ew", ipady=3)
         _btn(lb, self.t("logout_btn"), self._logout, bg=C["panel2"], fg=C["text"],
              font=(UI, 11)).grid(row=0, column=1, sticky="ew", padx=(8, 0), ipady=4, ipadx=8)
@@ -3071,7 +3144,7 @@ class App(tk.Tk):
         card = _cardf(p); card.grid(row=6, column=0, sticky="nsew")
         sb = ttk.Scrollbar(card); sb.pack(side=tk.RIGHT, fill=tk.Y, pady=4)
         self._cookie_list = tk.Listbox(card, font=(UI, 12), bg=C["panel"], fg=C["text"],
-                                       selectbackground=C["soft_blue"],
+                                       selectbackground="#C7E0F4",
                                        selectforeground=C["text"], activestyle="none",
                                        relief=tk.FLAT, bd=0, height=3, yscrollcommand=sb.set)
         self._cookie_list.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
@@ -3133,10 +3206,13 @@ class App(tk.Tk):
 
     STATUS_FG = {"idle": "text", "busy": "blue", "ok": "green_text", "warn": "orange",
                  "err": "red"}
+    STATUS_BG = {"idle": ("#E9EFF7", "#7D8999"), "busy": ("#E3EFFB", "#0F6CBD"), "ok": ("#DFF6DD", "#0B5E0B"),
+                 "warn": ("#FFF4CE", "#8A5A00"), "err": ("#FDE7E9", "#A4262C")}
 
-    def _statuspanel(self):
-        w = tk.Frame(self, bg=C["panel"], padx=16, pady=12, highlightthickness=1,
+    def _statuspanel(self, parent=None):
+        w = tk.Frame(parent or self, bg=C["panel"], padx=16, pady=8, highlightthickness=1,
                      highlightbackground=C["border"])
+        self._st_panel = w
         w.grid_columnconfigure(0, weight=1)
         self._st_main = self._label(w, "", 16, True, bg=C["panel"], wrap=True)
         self._st_main.config(height=2, anchor=tk.NW)      # two lines high; a longer message shrinks its type and grows (_fit_status)
@@ -3150,7 +3226,7 @@ class App(tk.Tk):
         self._st_btn.grid_remove()
         ttk.Progressbar(w, variable=self._prog, maximum=100,
                         style="Big.Horizontal.TProgressbar"
-                        ).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+                        ).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         return w
 
     def _actions(self):
@@ -3168,9 +3244,11 @@ class App(tk.Tk):
         can be shown again in the other language."""
         self._status_state = (kind, key, action, kw)
         icon = {"ok": "✓  ", "warn": "⚠  ", "err": "✗  "}.get(kind, "")
-        self._st_main.config(text=icon + self.t(key, **kw), fg=C[self.STATUS_FG[kind]])
+        bgc, edge = self.STATUS_BG[kind]
+        self._st_panel.config(bg=bgc, highlightbackground=edge)
+        self._st_main.config(text=icon + self.t(key, **kw), fg=C[self.STATUS_FG[kind]], bg=bgc)
         self._fit_status()
-        self._st_sub.config(text=sub)
+        self._st_sub.config(text=sub, bg=bgc)
         if sub: self._st_sub.grid()             # no empty line when there is nothing to say
         else:   self._st_sub.grid_remove()
         if action:
@@ -3187,7 +3265,7 @@ class App(tk.Tk):
         try:
             import tkinter.font as tkfont
             text = lab.cget("text")
-            width = max(100, (lab.winfo_width() if lab.winfo_width() > 60 else self.winfo_width() - 260) - 8)
+            width = max(100, (lab.winfo_width() if lab.winfo_width() > 60 else self.winfo_width() - 520) - 8)
             best = None
             for size, room in ((16, 2), (14, 3), (13, 3), (12, 5)):
                 f = tkfont.Font(family=UI, size=size, weight="bold")
@@ -3383,7 +3461,7 @@ class App(tk.Tk):
                        anchor=tk.W, justify=tk.LEFT, wraplength=wrap)
         msg.pack(fill=tk.X, pady=(8, 4))
         bar = tk.Frame(d, bg=C["bg"]); bar.pack(fill=tk.X, pady=(6, 0))
-        go_btn = _btn(bar, self.t("login_go"), lambda: go(), bg=C["green"],
+        go_btn = _btn(bar, self.t("login_go"), lambda: go(), bg=C["blue"],
                       font=(UI, 14, "bold"))
         go_btn.pack(side=tk.LEFT, ipadx=22, ipady=6)
         cancel_btn = _btn(bar, self.t("login_cancel"), lambda: close(), bg=C["panel2"],
@@ -3428,7 +3506,7 @@ class App(tk.Tk):
             def idle():
                 busy[0] = False
                 if alive():
-                    _recolor(go_btn, C["green"]); go_btn.config(state=tk.NORMAL)
+                    _recolor(go_btn, C["blue"]); go_btn.config(state=tk.NORMAL)
                     cancel_btn.config(state=tk.NORMAL)
 
             def failed(e):
@@ -3502,7 +3580,7 @@ class App(tk.Tk):
                        anchor=tk.W, justify=tk.LEFT, wraplength=wrap)
         msg.pack(fill=tk.X, pady=(8, 4))
         bar = tk.Frame(d, bg=C["bg"]); bar.pack(fill=tk.X, pady=(6, 0))
-        go_btn = _btn(bar, self.t("enter_go"), lambda: go(), bg=C["green"], font=(UI, 14, "bold"))
+        go_btn = _btn(bar, self.t("enter_go"), lambda: go(), bg=C["blue"], font=(UI, 14, "bold"))
         go_btn.pack(side=tk.LEFT, ipadx=22, ipady=6)
         cancel_btn = _btn(bar, self.t("login_cancel"), lambda: close(), bg=C["panel2"],
                           fg=C["text"], font=(UI, 12))
@@ -3547,7 +3625,7 @@ class App(tk.Tk):
                 self._log(f"Entering the room of {host} failed: {e.args[0]} {e.info}", "warn")
                 busy[0] = False
                 if alive():
-                    _recolor(go_btn, C["green"]); go_btn.config(state=tk.NORMAL)
+                    _recolor(go_btn, C["blue"]); go_btn.config(state=tk.NORMAL)
                     cancel_btn.config(state=tk.NORMAL)
                     extra = f"\n{self.t('login_site_said')} {e.info}" if e.info and e.args[0] in (
                         "enter_err_fail", "login_err_other") else ""
@@ -3823,7 +3901,7 @@ class App(tk.Tk):
         self._last_clip = self._read_clip()     # don't paste the same link straight back
         self._url_var.set(""); self._url_state = None; self._render_url_info()
         if not self._running:
-            self._set_status("idle", "st_ready")
+            self._set_status("idle", self._idle_key())
 
     def _browse_dir(self):
         d = filedialog.askdirectory(initialdir=self._dl_dir, parent=self,
@@ -3936,7 +4014,7 @@ class App(tk.Tk):
             if busy:
                 _recolor(b, C["disabled"]); b.config(state=tk.DISABLED)
             else:
-                _recolor(b, C["green"])
+                _recolor(b, C["blue"])
                 b.config(state=tk.NORMAL, text="⬇   " + key)
         self._conv_btn.config(state=tk.DISABLED if busy else tk.NORMAL)
         for rb in self._mode_radios:                # the mode cannot change during a job
@@ -4926,7 +5004,8 @@ class App(tk.Tk):
         good = bool(self._ffmpeg) and TRUSTSTORE_OK
         self._pill.config(text=("✓  " + self.t("ready")) if good
                           else ("⚠  " + self.t("attention")),
-                          fg=C["pill_ok"] if good else C["pill_warn"])
+                          fg=C["pill_ok"] if good else C["pill_warn"],
+                          bg=C["pill_ok_bg"] if good else C["pill_warn_bg"])
         ck = self._cookies_file or self._auto_cookie
         rows = [(self.t("sys_ssl"), self.t("sys_ok") if TRUSTSTORE_OK else self.t("sys_missing")),
                 (self.t("sys_ffmpeg"), self.t("sys_ok") if self._ffmpeg else self.t("sys_missing")),
@@ -4944,8 +5023,8 @@ class App(tk.Tk):
         if not self._ffmpeg:
             self._set_status("warn", "d_ffmpeg", action="ffmpeg")
         elif self._status_state[0] in ("idle", "warn") and \
-                self._status_state[1] in ("st_ready", "d_ffmpeg"):
-            self._set_status("idle", "st_ready")
+                self._status_state[1] in (*self.READY_KEYS.values(), "d_ffmpeg"):
+            self._set_status("idle", self._idle_key())
 
     def _refresh_ffmpeg(self):
         self._ffmpeg = _find_ffmpeg()

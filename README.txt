@@ -1,5 +1,5 @@
 ===============================================================
-  UNIVERSAL VIDEO DOWNLOADER                       version 9.28
+  UNIVERSAL VIDEO DOWNLOADER                       version 9.29
   Saves videos from the internet to your computer, in 480p
 ===============================================================
 
@@ -51,7 +51,7 @@ internet.
 
 How it works, in three moves:
   1. You copy the address of the video page.
-  2. You press one big green button.
+  2. You press one big blue button.
   3. The video appears in a folder on your computer.
 
 WHAT YOU NEED
@@ -75,11 +75,11 @@ GOOD TO KNOW
     for a laptop or tablet, and the files stay small.
   * The program looks at what you copied only when you switch
     to its window, and only if it is a web address. It never
-    downloads anything until you press the green button.
-  * Keyboard: the Tab key moves to the links at the bottom of
-    the window, and the Space key ticks or unticks a lesson in
-    a list. The window cannot be made smaller than a size at
-    which everything stays visible.
+    downloads anything until you press the blue button.
+  * Keyboard: the Tab key moves through the menu on the
+    left of the window, and the Space key ticks or unticks a
+    lesson in a list. The window cannot be made smaller than
+    a size at which everything stays visible.
 
 
 ---------------------------------------------------------------
@@ -224,7 +224,7 @@ section 7.
   3. YOUR FIRST DOWNLOAD
 ---------------------------------------------------------------
 
-The main window has one big green button, "Download video".
+The main window has one big blue button, "Download video".
 
 STEP 1 - Open the page with the video
   WHAT: In your web browser (Chrome, Edge), open the page.
@@ -247,12 +247,12 @@ STEP 4 - Check that it is the right video
      Found: Introduction to painting
             vimeo.com  .  12:30
   That is the title, the website and the length. Then the box
-  at the bottom says: "The link is fine. Press the green
+  at the bottom says: "The link is fine. Press the blue
   button "Download video"."
   IF YOU SEE something else: see section 7, "The link".
 
-STEP 5 - Press the green button
-  WHAT: Click the big green button "Download video".
+STEP 5 - Press the blue button
+  WHAT: Click the big blue button "Download video".
   YOU WILL SEE: the box at the bottom shows "Downloading..."
   and a number that grows to 100%, and about how many minutes
   are left. Wait. Do not close the window.
@@ -297,7 +297,7 @@ website that needs your login)
      Do the steps of OPTION A in section 5 ("Log in with a
      password"). After a good login the program goes back to
      the main page and says: "Logged in to ... For one video,
-     press the green "Download video" button. For a whole
+     press the blue "Download video" button. For a whole
      course, open "Several videos on one page"." The login
      stays saved: next time skip this step.
 
@@ -309,8 +309,8 @@ website that needs your login)
      course, not of one lesson.
 
   STEP 3 - OPEN THE RIGHT SCREEN.
-     In the program, look at the bottom of the window.
-     Click the blue link "Several videos on one page".
+     In the program, look at the menu on the left.
+     Click "Several videos".
 
   STEP 4 - PASTE THE ADDRESS.
      Press the blue button "Paste link".
@@ -325,7 +325,7 @@ website that needs your login)
      than a minute. Do not press anything.
      YOU WILL SEE AT THE END: a list, one line per video, every
      line with a tick, and the message "Found 13 videos. Untick
-     any you don't want, then press the green button. They will
+     any you don't want, then press the blue button. They will
      be saved in: ..." with the name of the folder (the number
      is the number of videos in your course).
      IF YOU SEE "No videos found": you are not logged in, or
@@ -342,7 +342,7 @@ website that needs your login)
      all" puts them all back.
 
   STEP 7 - DOWNLOAD.
-     Press the big green button "Download ticked videos".
+     Press the big blue button "Download ticked videos".
      YOU WILL SEE: a line like "Video 2 of 13:  45%" and a bar
      that fills up. Wait. At the end you see "Done! 13 of 13
      videos saved."
@@ -400,7 +400,7 @@ few hours - download them on the same day.
 WHEN DO YOU NEED THIS?
   * The video is on a website where YOU have an account. For
     example a course you paid for, or a membership.
-  * You press the green button, and the program says it cannot
+  * You press the blue button, and the program says it cannot
     find the video, or that the video is private.
   * Then the program must show that it is you. That is a login.
 
@@ -450,15 +450,15 @@ STEP 2 - Open Universal Video Downloader and paste the address
   IF THE BOX IS STILL EMPTY: do step 1 again.
 
 STEP 3 - Open the login page
-  WHAT: Look at the very bottom of the window. Click the
-  link "Log in to websites".
+  WHAT: In the menu on the left, click "Log in to
+  websites".
   YOU WILL SEE: a new page with the title "Log in to websites"
-  and a green button "Log in with a password".
+  and a blue button "Log in with a password".
   (You can also reach the login window from the button "Log in"
   under the message "No video was found on this page.")
 
 STEP 4 - Open the password window
-  WHAT: Click the green button "Log in with a password".
+  WHAT: Click the blue button "Log in with a password".
   YOU WILL SEE: a small window "Log in to a course website".
 
 STEP 5 - Check the web address in the first box
@@ -491,7 +491,7 @@ STEP 7 - Type your password
   Russian. Or right-click in the box and choose "Paste".
 
 STEP 8 - Press "Log in"
-  WHAT: Click the green button "Log in".
+  WHAT: Click the blue button "Log in".
   YOU WILL SEE: "Logging in - this can take up to about a
   minute. Please wait..."
   WHAT TO DO: wait. Do not click anything. While the login
@@ -502,11 +502,11 @@ STEP 8 - Press "Log in"
 STEP 9 - Success
   YOU WILL SEE: the program goes back to the main page and
   shows a message like "Logged in to <website>. For one video,
-  press the green "Download video" button. For a whole course,
+  press the blue "Download video" button. For a whole course,
   open "Several videos on one page"."
-  WHAT: For one video, press the big green "Download video"
-  button (section 3). For a whole course, click the link
-  "Several videos on one page" at the bottom and follow section
+  WHAT: For one video, press the big blue "Download video"
+  button (section 3). For a whole course, click "Several
+  videos" in the menu on the left and follow section
   4 from step 2.
   IF YOU SEE A RED MESSAGE: read the list "What the messages
   mean" below.
@@ -602,7 +602,7 @@ try again."
      in the browser). Wait a minute. Try again.
 
 You see: "Logged in to <website>, but the lesson page could not
-be opened to check it. Try it: one video - the green "Download
+be opened to check it. Try it: one video - the blue "Download
 video" button; a whole course - "Several videos on one page"."
   -> Do this: try one of the two ways the message names. If it
      fails, see the messages above.
@@ -642,7 +642,7 @@ Some people call it "cookies". You make it once. It then works
 for weeks or months.
 
 STEP 1 - Open the login page of Universal Video Downloader
-  WHAT: At the bottom of the window, click "Log in to
+  WHAT: In the menu on the left, click "Log in to
   websites".
   YOU WILL SEE: a page with three steps. Step 1 is "Install the
   free browser add-on", step 2 is "Log in to the websites you
@@ -702,7 +702,7 @@ STEP 6 - Close the website tab. Do NOT log out
 
 STEP 7 - Download
   WHAT: Copy the lesson's address (section 3, step 2) and press
-  "Paste link" and the green "Download video" button.
+  "Paste link" and the blue "Download video" button.
 
 GOOD TO KNOW
   * Do ALL the websites in one go, then export ONCE. One file
@@ -741,12 +741,12 @@ online.example.ru/room/abc . The video is not on that page, so
 the normal download cannot get it. The program can record the
 broadcast while it runs and turn it into an MP4 file for you.
 
-  1. At the bottom of the window, click
-       "Record a webinar room"
+  1. In the menu on the left, click
+       "Record a webinar"
   2. Copy the link you received for the webinar. It came in an
      e-mail or is on the course page. It is your own personal
      link: do not share it. Press "Paste link".
-  3. Press the green "Start recording". You can do this before
+  3. Press the blue "Start recording". You can do this before
      the webinar begins. The program says "Waiting for the
      broadcast to begin. Keep this window open." and starts
      recording by itself.
@@ -846,7 +846,7 @@ example school.example.ru/pl/webinar/show?id=123 . The same
 button "Record a webinar room" works for it.
 
   1. Log in to the school first (section 5).
-  2. At the bottom, click "Record a webinar room". Paste the
+  2. In the left menu, click "Record a webinar". Paste the
      link and press "Start recording".
   3. The program waits until the school's page starts the
      webinar. Keep the window open and the computer plugged in.
@@ -915,7 +915,7 @@ COURSE PAGES WITH SEVERAL VIDEOS
 --------------------------------
 Some course websites (for example schools built on GetCourse,
 and players called Kinescope) hide their videos inside the
-page. Copy the lesson page's address and press the green button
+page. Copy the lesson page's address and press the blue button
 as usual: the program finds the videos itself and downloads all
 of them. Each video is saved under its own title when the
 player gives one, otherwise as "lesson-name - 1", "lesson-name
@@ -929,7 +929,7 @@ VK LIVE BROADCASTS
 ------------------
 Links that look like  vkvideo.ru/live-123_456  (a live
 broadcast or its recording) work like any other VK video: paste
-the link and press the green button. VK sometimes shows a "bot
+the link and press the blue button. VK sometimes shows a "bot
 check" instead when it gets many requests in a row; if that
 happens, wait a few minutes and try again.
 
@@ -953,9 +953,9 @@ next to it.
 SOUND ONLY (MP3)
 ----------------
 Only want the sound (a lecture, a concert, music)?
-  1. On the main screen, above the green button, choose
+  1. On the main screen, above the blue button, choose
      "Sound only (MP3)".
-  2. The green button now says "Download sound". Press it.
+  2. The blue button now says "Download sound". Press it.
   3. You get a file ending in .mp3 in the same folder as your
      videos. The sound is saved at 192 kbit/s, whatever the
      video quality.
@@ -1027,8 +1027,8 @@ Websites change often. A website that worked yesterday can fail
 today. Do these steps, one at a time, until it works:
   1. Close the program. Open it again. Try again.
   2. Press the blue button "Update now" if it is next to the
-     message. Or click "Details for helper" at the bottom of
-     the window and press "Update download engine". YOU WILL
+     message. Or click "Details for helper" in the menu on
+     the left and press "Update download engine". YOU WILL
      SEE: "Updated. Close the program, open it again, and try
      once more." Do that.
   3. Still failing? Ask the person who made the program for a
@@ -1041,7 +1041,7 @@ connection."
 You see: "No internet connection, or the website is not
 answering. Try again in a minute."
   -> Do this: check the internet, wait a minute, press the
-     green button again.
+     blue button again.
 
 You see: "YouTube refused the download. YouTube changes often -
 updating the program usually fixes this."
@@ -1055,7 +1055,7 @@ YouTube and set up "Log in to websites"."
 SEVERAL VIDEOS
 --------------
 You see: "Done! 2 of 3 videos saved."
-  -> One of them failed. The others are saved. Press the green
+  -> One of them failed. The others are saved. Press the blue
      button again to retry. Videos that are already saved are
      not downloaded twice.
 
@@ -1075,12 +1075,12 @@ You see: "Secure-connection problem."
 
 You see: "Something went wrong. Your helper can see the details
 under "Details for helper"."
-  -> Do this: click "Details for helper" at the bottom of the
-     window. It shows what works, the versions, and a log of
+  -> Do this: click "Details for helper" in the menu on the
+     left. It shows what works, the versions, and a log of
      what the program did. Show it to the person who helps you.
 
 The download stops partway
-  -> Usually the internet connection. Press the green button
+  -> Usually the internet connection. Press the blue button
      again; it picks up from where it stopped.
 
 Videos look blurrier than expected
@@ -1199,6 +1199,10 @@ below are general guidance, not legal advice.
     cannot save the video.
   * It always downloads in 480p. There is no setting for higher
     quality.
+  * The window is made for eyes, mouse and keyboard. It is not
+    tested with screen readers (programs that read the screen
+    aloud), and it does not follow the Windows high contrast
+    mode.
   * A website can change overnight and stop working until the
     download engine catches up (usually within days). Closing
     and opening the program the next day often fixes it.
@@ -1252,14 +1256,14 @@ version.
   Start the program .... Desktop picture "Universal Video
                          Downloader", or Windows key, type
                          Universal , Enter
-  Download a video ..... copy the address, "Paste link", green
+  Download a video ..... copy the address, "Paste link", blue
                          "Download video"
   Find your videos ..... "Open folder" button, or the Downloads
                          folder
   A website stopped .... close and reopen the program; then
                          "Update now"; then ask for a new Setup
   Need a login ......... "Log in to websites" (section 5)
-  Record a webinar ..... bottom link "Record a webinar room",
+  Record a webinar ..... left menu "Record a webinar",
                          then "Start recording" BEFORE it
                          begins (section 6)
   Uninstall ............ Settings > Apps > Installed apps >

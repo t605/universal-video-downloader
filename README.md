@@ -1,7 +1,7 @@
 # Universal Video Downloader
 
 A Windows program that saves videos from **webinars and online-course websites** to your own computer.
-Paste a link, press one big green button. Made for people who are not technical: plain-language messages,
+Paste a link, press one big blue button. Made for people who are not technical: plain-language messages,
 large high-contrast window, English and Russian.
 
 > Built with Claude Code: the rules and decisions are the owner's, the program code was written with Claude Code.
