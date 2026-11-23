@@ -816,8 +816,17 @@ broadcast while it runs and turn it into an MP4 file for you.
     enough for about 2 h of webinar (the recording, and then
     the MP4). If the webinar is longer, press No and free some
     space. Record anyway?" Free some space first if you can.
-  * Rooms whose video comes from Rutube or VK are supported
-    (VK since version 9.27, tried on a real live broadcast).
+  * Rooms whose video comes from Rutube, VK or Kinescope are
+    supported (VK since version 9.27, tried on a real live
+    broadcast; Kinescope since 9.29, tried for a few minutes
+    on a real room that played a recording of 2 h 43 min).
+    A room that plays a recording can be saved whole, from
+    its start, even if you press the button late.
+    If your link has no name and e-mail in it (the room asks
+    for them in its own form), press the button "The school
+    asks for a name and e-mail?" on this page, type both and
+    press "Enter": they are put into the link and you press
+    "Start recording" as usual.
     You cannot tell from the link which kind a room is. The
     program learns it only when the broadcast starts, so be
     at the computer at that time. A VK room that is already
@@ -1207,7 +1216,8 @@ below are general guidance, not legal advice.
     download engine catches up (usually within days). Closing
     and opening the program the next day often fixes it.
   * Windows only. There is no version for Mac or Linux.
-  * Webinar rooms: rooms whose video comes from Rutube or VK,
+  * Webinar rooms: rooms whose video comes from Rutube, VK
+    or Kinescope,
     and school webinar pages (/pl/webinar/show). Only while
     you keep the window open and the
     computer awake. It cannot record a room whose

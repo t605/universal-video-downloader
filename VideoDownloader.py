@@ -1118,10 +1118,17 @@ def _http(url, data=None, headers=None, timeout=30):
     """(status, bytes). HTTP errors come back as a status, not an exception."""
     if not url.lower().startswith(("http://", "https://")):
         raise OSError("only http and https addresses are used")      # never file:// or ftp://
+    url, _, rng = url.partition("#bytes=")                         # a piece that is a byte range of one big file (HLS EXT-X-BYTERANGE)
     h = {"User-Agent": UA}; h.update(headers or {})
+    if rng:
+        h["Range"] = "bytes=" + rng
     req = urllib.request.Request(url, data=data, headers=h)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
+            if rng:
+                if r.status != 206:                                  # the whole file would come back for every piece
+                    raise OSError("the server ignored the byte range")
+                return 200, r.read()
             return r.status, r.read()
     except urllib.error.HTTPError as e:
         try:
@@ -1137,6 +1144,16 @@ def room_split_link(link: str):
         raise RoomError("room_err_link")
     room = urllib.parse.urlunparse((p.scheme, p.netloc, p.path.rstrip("/") + "/", "", "", ""))
     return room, dict(urllib.parse.parse_qsl(p.query, keep_blank_values=True))
+
+
+def room_link_with(link: str, name: str, email: str) -> str:
+    """A Bizon365 room link (/room/...) with the viewer's name and e-mail added as the room's own link carries them
+    (username=, email=): the room then lets the program in like a viewer who filled in the entry form. Nothing is sent anywhere."""
+    room_split_link(link)
+    p = urllib.parse.urlsplit(link.strip())
+    q = dict(urllib.parse.parse_qsl(p.query, keep_blank_values=True))
+    q["username"], q["email"] = name, email
+    return urllib.parse.urlunsplit((p.scheme, p.netloc, p.path, urllib.parse.urlencode(q), ""))
 
 
 GC_STREAM_RE = re.compile(r"https?://[A-Za-z0-9.-]*getcourse\.ru/playlist/[0-9a-f]{32}/master\.m3u8[^\"'\s<>\\]*")
@@ -1744,7 +1761,7 @@ def vk_wait_for_full(ref, min_seconds, stop, resolve=None, max_wait=VK_FULL_WAIT
     return None
 
 
-def stream_from_setting(video_type: str, ref: str, fetch=None, vk_resolve=None) -> str:
+def stream_from_setting(video_type: str, ref: str, fetch=None, vk_resolve=None, referer: str = "") -> str:
     """The room's video setting -> an HLS playlist address. Rutube (live), VK (through yt-dlp) and
     direct .m3u8 addresses; other kinds raise RoomError('room_err_type')."""
     fetch = fetch or (lambda u: _http(u)[1].decode("utf-8", "replace"))
@@ -1758,6 +1775,16 @@ def stream_from_setting(video_type: str, ref: str, fetch=None, vk_resolve=None) 
     vt = (video_type or "").lower()
     if vt == "vk" or re.search(r"(vk\.com|vk\.ru|vkvideo\.ru)/", ref, re.I):
         return (vk_resolve or vk_stream_url)(ref)
+    if vt in ("ks", "kinescope") or re.match(r"kinescope\s*:", ref, re.I) or "kinescope.io/" in ref:
+        # A room that plays a Kinescope video (found 2026-11-23: "kinescope: <id>", videoType "ks"). The player is domain-locked:
+        # its page must be asked for with the room as Referer. The video is an ordinary recording (a whole playlist with an end).
+        m = re.search(r"(?:kinescope\s*:|kinescope\.io/(?:embed/)?)\s*([A-Za-z0-9]{10,})", ref, re.I) or re.fullmatch(r"\s*([A-Za-z0-9]{10,})\s*", ref)
+        if not m:
+            raise RoomError("room_err_stream")
+        got = kinescope_stream("https://kinescope.io/embed/" + m.group(1), referer or "https://kinescope.io/")
+        if not got:
+            raise RoomError("room_err_stream")
+        return got[0]
     if not vt and (re.fullmatch(r"[0-9a-f]{32}", ref) or "rutube.ru" in ref):
         vt = "rutube"
     if vt != "rutube":
@@ -1784,6 +1811,15 @@ def hls_parse(text: str, base: str) -> dict:
     """A media playlist -> {'segments': [(number, address, seconds)], 'endlist': bool,
     'init': address or ''}. The number is the segment's own sequence number."""
     seq, segs, dur, end, init, enc = 0, [], 0.0, False, "", False
+    rng, ends = "", {}                  # a pending EXT-X-BYTERANGE "length[@offset]", and the end of the last range of each file
+
+    def with_range(url, spec, last_ends):
+        m = re.match(r"\s*(\d+)(?:@(\d+))?", spec or "")
+        if not m:
+            return url
+        start = int(m.group(2)) if m.group(2) is not None else last_ends.get(url, 0)
+        last_ends[url] = start + int(m.group(1))
+        return "%s#bytes=%d-%d" % (url, start, start + int(m.group(1)) - 1)
     for ln in (l.strip() for l in text.splitlines()):
         if not ln:
             continue
@@ -1798,15 +1834,21 @@ def hls_parse(text: str, base: str) -> dict:
                 enc = True                                           # encrypted pieces: the program cannot (and must not) read them
         elif ln.startswith("#EXT-X-MAP:"):
             m = re.search(r'URI="([^"]+)"', ln)
-            if m: init = urllib.parse.urljoin(base, m.group(1))
+            if m:
+                init = urllib.parse.urljoin(base, m.group(1))
+                b = re.search(r'BYTERANGE="([^"]+)"', ln)
+                if b:
+                    init = with_range(init, b.group(1), ends)
+        elif ln.startswith("#EXT-X-BYTERANGE:"):
+            rng = ln.split(":", 1)[1]
         elif ln.startswith("#EXTINF:"):
             try: dur = float(ln[8:].split(",")[0])
             except ValueError: dur = 0.0
         elif not ln.startswith("#"):
             url = urllib.parse.urljoin(base, ln)
             if url.lower().startswith(("http://", "https://")):    # never file:// or ftp://
-                segs.append((seq + len(segs), url, dur))
-            dur = 0.0
+                segs.append((seq + len(segs), with_range(url, rng, ends) if rng else url, dur))
+            dur, rng = 0.0, ""
     return {"segments": segs, "endlist": end, "init": init, "encrypted": enc}
 
 
@@ -2150,6 +2192,7 @@ T = {
     st_room_signin="Entering the webinar room...",
     st_room_wait="Waiting for the broadcast to begin. Keep this window open.",
     st_room_rec="Recording the broadcast...  recorded so far: {t} (hours:minutes:seconds)",
+    st_room_rec_vod="Saving the recorded webinar from its very start...  saved so far: {t} of {total} (hours:minutes:seconds). This is a ready recording, not a live broadcast, so it is saved faster than the webinar runs.",
     st_room_rec_late="Recording...  recorded so far: {t} (hours:minutes:seconds). The broadcast was already on air "
                      "when the recording started, so its beginning is not in this recording. For VK, the program will try to fetch the full recording after the end.",
     st_room_wait_full="The broadcast has ended. Waiting for VK's full recording, so that the whole webinar is in the video. Waited: {w}, at most {r} left. You may do other things; keep the laptop plugged in and the lid and this window open. “Stop and save” keeps what is recorded.",
@@ -2201,6 +2244,7 @@ T = {
     enter_go="Enter the room",
     enter_busy="Entering the room - this can take up to about a minute. Please wait...",
     enter_err_empty="Fill in the web address (it starts with https://), your name and your e-mail, and tick the box.",
+    enter_room_in_link="Your name and e-mail are now in the link. Press “Start recording”.",
     enter_err_form="This page shows no entry form. If you are already inside in your browser, use a login file instead (“Log in to websites”: add-on, log in, “Export”).",
     enter_err_fail="The school did not let the program in.",
     enter_ok="Entered the room of {host}. Now press “Start recording”.",
@@ -2387,6 +2431,7 @@ T = {
     st_room_signin="Захожу в комнату вебинара...",
     st_room_wait="Жду начала трансляции. Не закрывайте это окно.",
     st_room_rec="Идёт запись трансляции...  записано: {t} (часы:минуты:секунды)",
+    st_room_rec_vod="Сохраняю запись вебинара с самого начала...  сохранено: {t} из {total} (часы:минуты:секунды). Это готовая запись, а не прямой эфир, поэтому она сохраняется быстрее, чем идёт вебинар.",
     st_room_rec_late="Идёт запись...  записано: {t} (часы:минуты:секунды). Эфир уже шёл, когда запись "
                      "началась, поэтому начала вебинара в записи не будет. Для VK программа сама попробует скачать полную запись после конца эфира.",
     st_room_wait_full="Эфир закончился. Жду полную запись от VK, чтобы в видео был весь вебинар. Прошло: {w}, осталось не больше {r}. Можно заниматься другими делами; ноутбук в розетке, крышка и это окно открыты. «Остановить и сохранить» оставит записанное.",
@@ -2438,6 +2483,7 @@ T = {
     enter_go="Войти в комнату",
     enter_busy="Выполняется вход в комнату — это может занять до минуты. Подождите...",
     enter_err_empty="Заполните адрес (он начинается с https://), имя и электронную почту и поставьте галочку.",
+    enter_room_in_link="Ваше имя и почта вставлены в ссылку. Нажмите «Начать запись».",
     enter_err_form="На этой странице нет формы входа. Если в браузере вы уже внутри, используйте файл входа («Вход на сайты»: дополнение, вход на сайт, «Export»).",
     enter_err_fail="Школа не пустила программу.",
     enter_ok="Вход в комнату {host} выполнен. Теперь нажмите «Начать запись».",
@@ -3604,6 +3650,15 @@ class App(tk.Tk):
             site, nm, mail = v_site.get().strip(), v_name.get().strip(), v_mail.get().strip()
             if not (self._is_link(site) and nm and "@" in mail and v_ok.get()):
                 msg.config(text=self.t("enter_err_empty"), fg=C["red"]); return
+            if not is_gc_webinar_link(site):
+                try:                                              # a webinar-room link (/room/): the entry form is the room's own; put name + e-mail into the link
+                    self._room_var.set(room_link_with(site, nm, mail))
+                    self._log("Name and e-mail were added to the room link (they are not logged)", "info")
+                    d.destroy()
+                    self._set_status("ok", "enter_room_in_link")
+                    return
+                except RoomError:
+                    pass
             busy[0] = True
             msg.config(text=self.t("enter_busy"), fg=C["blue"])
             _recolor(go_btn, C["disabled"]); go_btn.config(state=tk.DISABLED)
@@ -4082,6 +4137,10 @@ class App(tk.Tk):
         if self._room_active and not self._room_stop.is_set() \
                 and (secs == 0 or now - self._room_shown >= 3):
             self._room_shown = now
+            vod = getattr(self, "_room_vod_total", 0)
+            if vod and not self._fetching_full and not self._late_start:
+                self._set_status("busy", "st_room_rec_vod", t=fmt_hms(secs), total=fmt_hms(vod))
+                return
             self._set_status("busy", "st_room_getting_full" if self._fetching_full
                              else "st_room_rec_late" if self._late_start else "st_room_rec", t=fmt_hms(secs))
 
@@ -4168,6 +4227,7 @@ class App(tk.Tk):
         say = lambda m, tag="plain": self.after(0, lambda: self._log(m, tag))
         out = ""
         self._late_start = False
+        self._room_vod_total = 0                            # seconds of a recorded video that a room plays (saved whole, faster than real time)
         self._waiting_full = False
         self._fetching_full = False
         self._wait_nofull = False
@@ -4229,7 +4289,7 @@ class App(tk.Tk):
                 vt, ref, title = got
                 say(f"   On air. Video type: {vt or '(none)'}")
                 self._late_start = bool(join.get("on_air_at_join"))
-                if self._late_start:
+                if self._late_start and (vt or "").lower() not in ("ks", "kinescope"):
                     say("   The broadcast was already on air when the recording was started: its beginning cannot be recorded", "warn")
                 _p = urllib.parse.urlparse(str(ref))           # no query string, and never the part after the first comma (VK access hash)
                 say("   Video setting from the room: " +
@@ -4237,7 +4297,23 @@ class App(tk.Tk):
                 if (vt or "").lower() == "vk":
                     say("   Asking VK for the video address...")
                 url = stream_from_setting(
-                    vt, ref, vk_resolve=lambda r: vk_stream_url(r, self._cookie_file_for(vk_page_url(r)) or "", info_out=first))
+                    vt, ref, vk_resolve=lambda r: vk_stream_url(r, self._cookie_file_for(vk_page_url(r)) or "", info_out=first),
+                    referer=origin + "/")
+                if (vt or "").lower() in ("ks", "kinescope"):
+                    fetch = lambda u: gc_fetch(u, "https://kinescope.io")  # its pieces: Referer / Origin as the real player sends
+                    try:                                                 # a recording (a playlist with an end) is taken whole, from its start
+                        mtext = fetch(url).decode("utf-8", "replace")
+                        murl = hls_best_variant(mtext, url) or url
+                        ptext = mtext if murl == url else fetch(murl).decode("utf-8", "replace")
+                        if "#EXT-X-ENDLIST" in ptext:
+                            self._room_vod_total = sum(sg[2] for sg in hls_parse(ptext, murl)["segments"])
+                    except Exception:
+                        self._room_vod_total = 0
+                    if self._room_vod_total:
+                        self._late_start = False
+                        say(f"   The room plays an ordinary recorded video ({fmt_hms(self._room_vod_total)}): it is saved from its very start, faster than real time", "info")
+                    elif self._late_start:
+                        say("   The broadcast was already on air when the recording was started: its beginning cannot be recorded", "warn")
                 if first.get("is_live") is False and self._late_start:
                     self._late_start = False             # an ordinary (pre-recorded) video shown as "live": it is recorded whole
                     say("   VK shows this as an ordinary video, not a running broadcast: it is recorded from its start", "info")

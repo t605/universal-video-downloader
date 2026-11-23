@@ -51,7 +51,7 @@ for size in ("default", "min"):
             print(f"{size:7} {lang} {page:8} {app.winfo_width()}x{app.winfo_height()}  spare {spare:4} px  {'ok' if ok else 'CLIPPED'}")
 # The longest status messages of the room recorder must not push the page out of its space (added 2026-11-20).
 STATUS_KEYS = [("busy", "st_room_wait_full", dict(h=4, w="3:59:59", r="3:59:59")), ("busy", "st_room_getting_full", dict(t="2:28:34")),
-               ("busy", "st_room_checking", {}), ("busy", "st_room_rec_late", dict(t="2:28:34")),
+               ("busy", "st_room_checking", {}), ("busy", "st_room_rec_vod", dict(t="2:28:34", total="2:43:39")), ("busy", "st_room_rec_late", dict(t="2:28:34")),
                ("warn", "st_room_done_late", dict(t="2:28:34")), ("warn", "st_room_done_late_nofull", dict(t="2:28:34")),
                ("warn", "st_room_done_skipped", dict(n=12)), ("warn", "st_room_done_check", dict(t="2:28:34")),
                ("err", "room_err_gc_nostream", {}), ("err", "room_err_enc", {})]

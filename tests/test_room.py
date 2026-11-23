@@ -436,6 +436,61 @@ class RecorderTests(unittest.TestCase):
         r.refresh = lambda: URL
         self.assertTrue(r._renew("t"))                 # a quick answer still works
 
+    def test_byte_range_pieces_are_read_and_fetched_with_a_range(self):
+        pl = ('#EXTM3U\n#EXT-X-VERSION:6\n#EXT-X-MAP:URI="v.mp4",BYTERANGE="100@0"\n'
+              '#EXTINF:4.0,\n#EXT-X-BYTERANGE:50@100\nv.mp4\n#EXTINF:4.0,\n#EXT-X-BYTERANGE:60\nv.mp4\n#EXT-X-ENDLIST\n')
+        r = vd.hls_parse(pl, "https://cdn.example/dir/m.m3u8")
+        self.assertEqual(r["init"], "https://cdn.example/dir/v.mp4#bytes=0-99")
+        self.assertEqual([x[1] for x in r["segments"]], ["https://cdn.example/dir/v.mp4#bytes=100-149", "https://cdn.example/dir/v.mp4#bytes=150-209"])
+        import http.server
+        body = bytes(range(256)) * 4
+        seen = []
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                rg = self.headers.get("Range")
+                seen.append(rg)
+                if self.path.startswith("/norange") or not rg:
+                    self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+                    return
+                a, b = [int(x) for x in rg.split("=")[1].split("-")]
+                part = body[a:b + 1]
+                self.send_response(206); self.send_header("Content-Length", str(len(part))); self.end_headers(); self.wfile.write(part)
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            base = "http://127.0.0.1:%d" % srv.server_address[1]
+            self.assertEqual(vd._http(base + "/v.mp4#bytes=10-19"), (200, body[10:20]))
+            self.assertEqual(seen[-1], "bytes=10-19")
+            with self.assertRaises(OSError):                       # a server that sends the whole file for a range is refused
+                vd._http(base + "/norange#bytes=10-19")
+        finally:
+            srv.shutdown(); srv.server_close()
+
+    def test_a_kinescope_room_video_is_resolved_with_the_room_as_referer(self):
+        calls = []
+        old = vd.kinescope_stream
+        vd.kinescope_stream = lambda u, ref, ctx=None: (calls.append((u, ref)) or ("https://cdn.example/master.m3u8?sign=x", "T"))
+        try:
+            for vt, ref in (("ks", "kinescope: 8mqLbm6wHztNLw9TGi6FJs"), ("kinescope", "https://kinescope.io/embed/8mqLbm6wHztNLw9TGi6FJs")):
+                self.assertEqual(vd.stream_from_setting(vt, ref, referer="https://room.example/"), "https://cdn.example/master.m3u8?sign=x")
+            self.assertEqual(calls[0], ("https://kinescope.io/embed/8mqLbm6wHztNLw9TGi6FJs", "https://room.example/"))
+            vd.kinescope_stream = lambda u, ref, ctx=None: None
+            with self.assertRaises(vd.RoomError):
+                vd.stream_from_setting("ks", "kinescope: 8mqLbm6wHztNLw9TGi6FJs")
+        finally:
+            vd.kinescope_stream = old
+
+    def test_name_and_email_are_put_into_a_room_link(self):
+        out = vd.room_link_with("https://start.example/room/201215/veb?utm_source=x", "Anna Petrova", "anna@example.org")
+        room, q = vd.room_split_link(out)
+        self.assertEqual((room, q["username"], q["email"], q["utm_source"]), ("https://start.example/room/201215/veb/", "Anna Petrova", "anna@example.org", "x"))
+        with self.assertRaises(vd.RoomError):
+            vd.room_link_with("https://school.example/pl/webinar/show?id=5", "A", "a@b.c")
+
     def test_an_encrypted_stream_is_refused_and_leaves_no_data(self):
         enc = "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"k\"\n" + playlist(0, 3)
         self.assertTrue(vd.hls_parse(enc, URL)["encrypted"])
