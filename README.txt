@@ -900,7 +900,13 @@ holds no broadcast address. Two ways:
      room". The program sends the form to that school, as
      your browser does. Then press "Start recording". Your
      name and e-mail are not saved by the program.
-     (This way was tested only with a made-up school.) It
+     (This way was tested only with a made-up school.) The
+     same entry for an ordinary page to download, not a
+     webinar (the page says "To watch the video, log in"
+     and shows only name and e-mail fields): button "No
+     password, only a name and e-mail? Enter here..." on
+     the page "Log in to websites", then paste the link as
+     usual. It
      never replaces a saved password login: it saves its
      own file.
   B. Use a login file (section 5, Option B), exported from

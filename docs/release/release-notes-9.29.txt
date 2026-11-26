@@ -1,6 +1,6 @@
 Universal Video Downloader 9.29 - a new look in the Windows 11 (Fluent 2) style
 
-9.29 changes how the window looks and is operated; it does not change what the program downloads or records (9.28 is the version before it).
+9.29 changes how the window looks and is operated, and adds the changes for webinars and entry forms listed below (9.28 is the version before it).
 
 What is new:
 
@@ -14,7 +14,13 @@ What is new:
   icon, never colour alone.
 - Measured contrast. Text on the page 15.9:1, grey help text 7.3:1, white text on the blue button 5.4:1, status texts 4.6:1 to 7.0:1, edges of boxes and buttons at least 3.3:1.
 - Webinar rooms that play a Kinescope video. Bizon365 rooms (start.bizon365.ru and others) announce their video as a Kinescope recording; the program could not take that type before. It now reads the player with the room as Referer, takes the 480p stream and saves it whole, from its start, even if you press the button late. The player gives its pieces as byte ranges of one big file; the program now asks for exactly those bytes (a first try without that downloaded the whole file for every piece, 2.6 GB for two minutes). Tried on a real room: 45 seconds of work saved 25 minutes of video, 146 MB, decoded without errors. Not tried: the whole 2 h 43 min recording in one go, through the window.
+- Scheduled school webinars connect again. A newer school webinar server opens the connection by itself and closed it when the program sent its own "connect" message as well, so the program said "Could not connect to the school's webinar channel". The program now sends that message only if the server has not connected within two seconds. Tried on a real server before the start of a webinar: the connection stayed open for 26 seconds without errors.
+- Scheduled school webinars whose video code has two parts. Some schools announce the video with a code of two parts, and their video server answered "error 500" to the whole code, so no video could be saved. The program now also asks with the first part alone and takes whichever the server accepts. Tried on a real webinar: three video servers refused the whole code and accepted the first part; the whole webinar (2:00:57, 854 x 480, 984 MB) was then saved through the window in under five minutes and decoded from start to end without errors.
 - A room link without a name and e-mail. The button "The school asks for a name and e-mail?" now also works for such room links: it puts both into the link, and you press "Start recording".
+- Pages that want only a name and e-mail. Some course pages say "To watch the video, log in" but ask only for a name and an e-mail (no password). The entry for that, already there for webinar rooms, is now also on the "Log in to websites" page (button "No password, only a name and e-mail?") and named in the message that says no video was found; after it the program looks at the link again.
+- A phone number in the entry form. Some schools ask for a name, an e-mail and a phone to enter a webinar page. The entry dialog has an optional phone field and sends it only into a phone field of the page's own form.
+- A button to copy the log. The page for the helper has a button that puts the system lines and the activity log on the clipboard (the log box itself cannot be selected), so they can be pasted into a message.
+- Entry that sticks. When a school's answer to the name and e-mail form names a page to go to next, the program now visits it (on the school's own address only) before it checks the entry; if the entry still fails, the message says which keys the answer had and where the program went, so the cause can be found.
 - A recorded webinar says so. When a room plays a recording (not a live broadcast), the window now says "Saving the recorded webinar from its very start... saved so far: X of Y" instead of "Recording the broadcast", because it is saved faster than the webinar runs.
 - After the review. Each page now says what to do on it in the message box (the calm message no longer begins with "Ready", which looked like a finished job); the title bar names the open page; a page that is not shown no longer takes Tab focus; every button, text box and list row has a visible focus frame; the disabled button is light, not a dark bar; the help of the webinar page is a short numbered list; the Tab order of the header follows the picture; the progress bar is a thin line.
 - A wider window. It opens at 1120 x 840 (minimum 1000 x 840) because the menu needs room.
@@ -25,12 +31,12 @@ Built with Claude Code: the rules and decisions are the owner's, the program cod
 
 Files
 
-  UniversalVideoDownloader-Setup.exe (recommended)  51.6 MB  SHA-256 AE0534FEA49B414AAA4D6531F0938BE0019FA5F9885E7A65A410A2C033A85283
-  UniversalVideoDownloader.zip (alternative: a .bat launcher)  0.1 MB  SHA-256 D01897A8F73434C0565DEF3E90DFF99C572196DD9979807638D07E7EFD3ADEF0
+  UniversalVideoDownloader-Setup.exe (recommended)  51.6 MB  SHA-256 E3839E710E85AE6CAA667023BBA59F2F71B97E5EAE267F4F9EAD22CCB679DC11
+  UniversalVideoDownloader.zip (alternative: a .bat launcher)  0.1 MB  SHA-256 4808F0CFC050BE4DBB29A7EF52E169245A605D7626A051C53FD37C97C95FC814
 
 Tested
 
-- 182 automated offline tests pass (69 room, 20 audio and file names, 22 login, 8 scan, 7 engine, 7 texts, 49 webinar pages).
+- 186 automated offline tests pass (69 room, 20 audio and file names, 22 login, 8 scan, 7 engine, 7 texts, 53 webinar pages).
 - Every page of the window was measured in both languages at the default and the smallest size: nothing is clipped. The long status messages of the webinar recorder were measured too.
 - Not tested: the new window on a screen with scaling above 100 %, on a clean PC, on Windows 10 (the icons fall back to Segoe MDL2 Assets there, or are left out), with a screen reader, and by the people it is made for.
 

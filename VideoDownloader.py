@@ -996,7 +996,7 @@ def school_login(page_url, email, password, timeout=30, allow_http=False):
     return path, checked
 
 
-def school_enter_room(page_url, name, email, timeout=30, allow_http=False):
+def school_enter_room(page_url, name, email, timeout=30, allow_http=False, phone=""):
     """Enter a GetCourse school's webinar room the way its "Enter the room" button does, for a school
     that has NO password (the page shows a small form: name + e-mail). Added 2026-11-17 after a real
     school's webinar page redirected the program to /enterweb_back (a guest: accountUserId = -1).
@@ -1045,7 +1045,7 @@ def school_enter_room(page_url, name, email, timeout=30, allow_http=False):
 
     def brief(s):                                              # what the site answered, without tags / your data
         s = re.sub(r"<[^>]+>", " ", str(s))
-        for secret in (name, email):
+        for secret in (name, email, phone):
             if secret and len(secret) >= 3:
                 s = s.replace(secret, "***")
         return re.sub(r"\s+", " ", s).strip()[:240]
@@ -1070,6 +1070,8 @@ def school_enter_room(page_url, name, email, timeout=30, allow_http=False):
                 data[nm] = name
             elif "[email]" in nm:
                 data[nm] = email
+            elif "[phone]" in nm:                              # some schools ask for a phone as well (found 2026-11-25)
+                data[nm] = phone
         if not any("[email]" in k for k in data):
             data["formParams[email]"] = email
         if not any("full_name" in k for k in data):
@@ -1082,10 +1084,34 @@ def school_enter_room(page_url, name, email, timeout=30, allow_http=False):
         err = isinstance(ans, dict) and (ans.get("errorMessage") or ans.get("error") or ans.get("errors"))
         if err:
             raise LoginError("enter_err_fail", brief(err if isinstance(err, str) else json.dumps(err, ensure_ascii=False)))
+        # The school's answer may name a page to go to next (redirectUrl): that visit is what makes the entry stick.
+        # Followed only on the school's own host, over https.
+        def redirects(o, depth=0):
+            if depth > 4:
+                return []
+            if isinstance(o, dict):
+                out = [v for k, v in o.items() if isinstance(v, str) and "redirect" in str(k).lower() and v.strip()]
+                for v in o.values():
+                    out += redirects(v, depth + 1)
+                return out
+            if isinstance(o, list):
+                return [x for v in o for x in redirects(v, depth + 1)]
+            return []
+        went = ""
+        for r in redirects(ans)[:2]:
+            nxt = urllib.parse.urljoin(final, r)
+            if host_of(nxt) == host and nxt.lower().startswith("https://") or (allow_http and host_of(nxt) == host):
+                try:
+                    call(nxt)
+                    went = urllib.parse.urlsplit(nxt).path[:60]
+                except LoginError:
+                    pass
         final, html = call(page_url)
         if not known(html):
-            raise LoginError("enter_err_fail", "the page still shows the entry form" if "block-public/process" in html
-                             else "the page does not know the visitor")
+            keys = ",".join(sorted(str(k) for k in ans))[:80] if isinstance(ans, dict) else "no JSON"
+            raise LoginError("enter_err_fail", ("the page still shows the entry form" if "block-public/process" in html
+                                                else "the page does not know the visitor")
+                             + f" (answer: {keys}; went to: {went or 'nothing'})")
     safe = re.sub(r"[^A-Za-z0-9.-]", "_", host)
     path = os.path.join(LOGIN_DIR, f"{safe}.guest.txt")   # NOT <host>.txt: a saved password login stays
     _write_netscape(jar, path)
@@ -1374,7 +1400,10 @@ def gc_wait_for_video(info: dict, origin: str, stop, ws_url=None, reconnects=6, 
             if not first.startswith("0"):
                 raise RoomError("room_err_gc_socket")
             ping = json.loads(first[1:]).get("pingInterval", 25000) / 1000.0
-            ws.send("40")
+            # Newer school servers connect the namespace themselves ("40") and CLOSE the channel if the client sends one too
+            # (found 2026-11-26: the webinar that should start in 20 minutes gave "could not connect"). Older ones wait for it.
+            if not (ws.recv(2.0) or "").startswith("40"):
+                ws.send("40")
             for c in chans:
                 ws.send("42" + json.dumps(["join", {"channel": c, "sign": info["sign"]}]))
             ask = lambda: ws.send("42" + json.dumps(["initAutoWebinar", {"id": int(info["wid"]), "launchNumber": str(info["launch"])}]))
@@ -1417,14 +1446,20 @@ def gc_auto_segments(origin: str, video: dict, cookie_header: str, stop, hosts=N
     `get(url, headers)` -> (status, bytes) is replaceable for tests. RoomError('room_err_gc_info') on failure."""
     get = get or (lambda u, h: _http(u, headers=h, timeout=30))
     hdr = {"Referer": origin + "/", "Origin": origin}
-    q = "/pl/fileservice/api/aw-master?" + urllib.parse.urlencode(
-        {"hash": video["hash"], "start": video["start"], "timeoffset": video["offset"]})
-    try:
-        st, body = get(origin + q, dict(hdr, Cookie=cookie_header) if cookie_header else hdr)
-    except OSError:
-        raise RoomError("room_err_gc_info")
-    path = body.decode("utf-8", "replace").strip()
-    if st != 200 or not path.startswith("/api/autoweb/"):
+    # Some schools send the hash as "<32>/<32>" and their video server answers 500 to it but serves the first part
+    # alone (found 2026-11-26); others want both parts. Ask the school for each form, whole one first.
+    paths = []
+    for h in dict.fromkeys((video["hash"], video["hash"].split("/")[0])):
+        q = "/pl/fileservice/api/aw-master?" + urllib.parse.urlencode(
+            {"hash": h, "start": video["start"], "timeoffset": video["offset"]})
+        try:
+            st, body = get(origin + q, dict(hdr, Cookie=cookie_header) if cookie_header else hdr)
+        except OSError:
+            continue
+        path = body.decode("utf-8", "replace").strip()
+        if st == 200 and path.startswith("/api/autoweb/"):
+            paths.append(path)
+    if not paths:
         raise RoomError("room_err_gc_info")
     master = ""
     for n in range(attempts):                               # the servers answer 503 now and then: try others
@@ -1432,12 +1467,15 @@ def gc_auto_segments(origin: str, video: dict, cookie_header: str, stop, hosts=N
             raise RoomError("room_err_gc_info")
         base = (hosts or GC_MASTER_HOSTS)[n % len(hosts or GC_MASTER_HOSTS)]
         cdn = GC_CDN_ORDERS[n % len(GC_CDN_ORDERS)]
-        try:
-            st, body = get(f"{base}{path}&cdn-list={cdn}&v={int(time.time() * 1000)}", hdr)
+        for path in paths:
+            try:
+                st, body = get(f"{base}{path}&cdn-list={cdn}&v={int(time.time() * 1000)}", hdr)
+            except OSError:
+                continue
             if st == 200 and b"#EXTM3U" in body[:50]:
                 master = body.decode("utf-8", "replace"); mbase = base; break
-        except OSError:
-            pass
+        if master:
+            break
         stop.wait(pause)
     if not master:
         raise RoomError("room_err_gc_info")
@@ -2232,13 +2270,15 @@ T = {
     room_err_link="This link does not look like a webinar. The address must contain /room/ (a webinar room) or /pl/webinar/show (a school's own webinar page). Copy the address of the page where the webinar is shown.",
     room_err_gc_page="The webinar page could not be opened. Log in to the school first (“Log in to websites”), then try again. If the school has no password, press the button “The school asks for a name and e-mail?” on this page.",
     room_err_gc_nostream="This webinar page holds no broadcast address: the program is probably not logged in to the school. If the school has no password, use a login file (“Log in to websites”, three steps), then try again.",
-    room_err_gc_socket="Could not connect to the school's webinar channel. Wait one minute, then press “Start recording” again.",
+    room_err_gc_socket="Could not connect to the school's webinar channel. Wait one minute, then press “Start recording” again. If it keeps failing, the webinar is probably over: the school no longer shows the video of a finished webinar. Tell the person who helps you.",
     room_err_gc_info="The school did not give the video list for this webinar. Wait a minute and try again. If it keeps failing, tell the person who helps you.",
     enter_btn="The school asks for a name and e-mail?  Enter the room here...",
-    enter_title="Enter the webinar room",
+    enter_btn_site="No password, only a name and e-mail?  Enter here...",
+    enter_title="Enter with a name and e-mail",
     enter_help="Use this only if the webinar page shows a small form (your name and e-mail and a button “Enter the room”) and the school has no password. The program fills in that form for you, in the same way as your browser does. Your name and e-mail are sent only to this school and are not saved by the program.",
-    enter_site="Web address of the webinar page (the one you paste for recording):",
+    enter_site="Web address of the page (the one you paste):",
     enter_name="Your name (as in the school's form):",
+    enter_phone="Your phone (only if the form asks for it; otherwise leave empty):",
     enter_email="Your e-mail (the one you registered with):",
     enter_consent="I agree that the program sends my name and e-mail to the school, as the school's own form does.",
     enter_go="Enter the room",
@@ -2247,7 +2287,7 @@ T = {
     enter_room_in_link="Your name and e-mail are now in the link. Press “Start recording”.",
     enter_err_form="This page shows no entry form. If you are already inside in your browser, use a login file instead (“Log in to websites”: add-on, log in, “Export”).",
     enter_err_fail="The school did not let the program in.",
-    enter_ok="Entered the room of {host}. Now press “Start recording”.",
+    enter_ok="Entered {host}. Now use the page again: for a video press “Paste link”, for a webinar press “Start recording”.",
     room_err_signin="The room did not let the program in. Open the link in your browser to "
                     "check that it still works. If it does not, ask the school for a new link.",
     room_err_closed="The room still shows its entry form. The link may be old or "
@@ -2300,7 +2340,7 @@ T = {
               "Set up “Log in to websites”.",
     d_not_video="This address is not a video page, or this website is not supported.",
     d_no_player="No video was found on this page. If it is a private lesson, log in first "
-                "(press the button “Log in” below); otherwise this website may not be supported.",
+                "(press the button “Log in” below). If the page asks only for a name and e-mail, use “No password, only a name and e-mail?” on the “Log in to websites” page. Otherwise this website may not be supported.",
     d_drm="This video is copy-protected (DRM), like films on Netflix. Your login is fine — this program cannot save it and does not try to get around the protection. Watch it on the website or in its app.",
     d_network="No internet connection, or the website is not answering. "
               "Try again in a minute.",
@@ -2379,6 +2419,8 @@ T = {
     clip_paste="Paste", clip_copy="Copy", clip_cut="Cut", login_site_said="The website said:",
     sites_title="Open a website and log in", sites_open="Open {name}", close="Close",
     dt_title="Details for helper",
+    dt_copy_log="Copy the log",
+    dt_copied="The log is copied. Paste it into a message with Ctrl+V and send it to the person who helps you.",
     dt_ssl="Certificate check:", ssl_auto="Automatic (Windows certificates)",
     ssl_strict="Strict (certifi)", ssl_skip="Skip the check (last resort)",
     dt_yt="YouTube: try without login first (avoids “page needs to be reloaded”)",
@@ -2471,13 +2513,15 @@ T = {
     room_err_link="Эта ссылка не похожа на вебинар. В адресе должно быть /room/ (вебинарная комната) или /pl/webinar/show (страница вебинара школы). Скопируйте адрес страницы, где показывают вебинар.",
     room_err_gc_page="Страницу вебинара не удалось открыть. Сначала войдите на сайт школы («Вход на сайты») и повторите. Если у школы нет пароля, нажмите на этой странице кнопку «Школа просит имя и электронную почту?».",
     room_err_gc_nostream="На странице вебинара нет адреса трансляции: программа, скорее всего, не вошла на сайт школы. Если у школы нет пароля, используйте файл входа («Вход на сайты», три шага) и повторите.",
-    room_err_gc_socket="Не удалось подключиться к каналу вебинара школы. Подождите минуту и снова нажмите «Начать запись».",
+    room_err_gc_socket="Не удалось подключиться к каналу вебинара школы. Подождите минуту и снова нажмите «Начать запись». Если не получается, вебинар, скорее всего, уже закончился: школа не показывает видео закончившегося вебинара. Сообщите тому, кто вам помогает.",
     room_err_gc_info="Школа не выдала список видео этого вебинара. Подождите минуту и попробуйте ещё раз. Если не получится, сообщите тому, кто вам помогает.",
     enter_btn="Школа просит имя и электронную почту?  Войти в комнату здесь...",
-    enter_title="Вход в комнату вебинара",
+    enter_btn_site="Нет пароля, только имя и почта?  Войти здесь...",
+    enter_title="Вход по имени и почте",
     enter_help="Нужно, только если страница вебинара показывает небольшую форму (имя, электронная почта и кнопка «Войти в комнату»), а пароля у школы нет. Программа заполнит эту форму за вас, так же, как это делает браузер. Ваше имя и почта отправляются только этой школе, программа их не сохраняет.",
-    enter_site="Адрес страницы вебинара (тот, который вы вставляете для записи):",
+    enter_site="Адрес страницы (тот, который вы вставляете):",
     enter_name="Ваше имя (как в форме школы):",
+    enter_phone="Ваш телефон (только если форма его просит; иначе оставьте пустым):",
     enter_email="Ваша электронная почта (с которой вы регистрировались):",
     enter_consent="Я согласен, что программа отправит моё имя и почту школе, как это делает форма самой школы.",
     enter_go="Войти в комнату",
@@ -2486,7 +2530,7 @@ T = {
     enter_room_in_link="Ваше имя и почта вставлены в ссылку. Нажмите «Начать запись».",
     enter_err_form="На этой странице нет формы входа. Если в браузере вы уже внутри, используйте файл входа («Вход на сайты»: дополнение, вход на сайт, «Export»).",
     enter_err_fail="Школа не пустила программу.",
-    enter_ok="Вход в комнату {host} выполнен. Теперь нажмите «Начать запись».",
+    enter_ok="Вход на {host} выполнен. Теперь пользуйтесь страницей снова: для видео нажмите «Вставить ссылку», для вебинара «Начать запись».",
     room_err_signin="Комната не пустила программу. Откройте ссылку в браузере и проверьте, "
                     "что она ещё работает. Если нет — попросите у школы новую ссылку.",
     room_err_closed="Комната всё ещё показывает форму входа. Возможно, ссылка устарела или "
@@ -2543,7 +2587,7 @@ T = {
               "«Вход на сайты».",
     d_not_video="По этому адресу нет видео, или этот сайт не поддерживается.",
     d_no_player="На этой странице не найдено видео. Если это закрытый урок, сначала войдите "
-                "(нажмите кнопку «Войти» ниже); иначе этот сайт может не поддерживаться.",
+                "(нажмите кнопку «Войти» ниже). Если страница просит только имя и почту, нажмите «Нет пароля, только имя и почта?» на странице «Вход на сайты». Иначе этот сайт может не поддерживаться.",
     d_drm="Это видео защищено от копирования (DRM), как фильмы на Netflix. С вашим входом всё в порядке — эта программа не может его сохранить и не пытается обойти защиту. Смотрите его на сайте или в приложении сайта.",
     d_network="Нет интернета, или сайт не отвечает. Попробуйте через минуту.",
     d_other="Что-то пошло не так. Помощник увидит подробности в разделе "
@@ -2617,6 +2661,8 @@ T = {
     clip_paste="Вставить", clip_copy="Копировать", clip_cut="Вырезать", login_site_said="Сайт ответил:",
     sites_title="Откройте сайт и войдите", sites_open="Открыть {name}", close="Закрыть",
     dt_title="Для помощника",
+    dt_copy_log="Скопировать журнал",
+    dt_copied="Журнал скопирован. Вставьте его в сообщение (Ctrl и V) и отправьте тому, кто вам помогает.",
     dt_ssl="Проверка сертификатов:", ssl_auto="Автоматически (сертификаты Windows)",
     ssl_strict="Строго (certifi)", ssl_skip="Без проверки (крайняя мера)",
     dt_yt="YouTube: сначала без входа (помогает при «page needs to be reloaded»)",
@@ -3164,6 +3210,8 @@ class App(tk.Tk):
              font=(UI, 11)).grid(row=0, column=1, sticky="ew", padx=(8, 0), ipady=4, ipadx=8)
         self._label(p, self.t("ck_help"), 13, fg=C["muted"], wrap=True
                     ).grid(row=2, column=0, sticky="ew")
+        _btn(p, self.t("enter_btn_site"), self._open_enter_room, bg=C["panel2"], fg=C["text"],
+             font=(UI, 12)).grid(row=4, column=0, sticky="w", pady=(8, 0), ipadx=12, ipady=4)
 
         wiz = tk.Frame(p, bg=C["panel"], padx=16, pady=10, highlightthickness=1,
                        highlightbackground=C["border"])
@@ -3234,6 +3282,8 @@ class App(tk.Tk):
         self._label(top, self.t("dt_log"), 13, True).pack(side=tk.LEFT)
         _btn(top, self.t("dt_clear_log"), self._clear_log, bg=C["panel2"], fg=C["text"],
              font=(UI, 11)).pack(side=tk.RIGHT, ipadx=8)
+        _btn(top, self.t("dt_copy_log"), self._copy_log, bg=C["blue"],
+             font=(UI, 11, "bold")).pack(side=tk.RIGHT, padx=(0, 8), ipadx=8)
         card = _cardf(p); card.grid(row=6, column=0, sticky="nsew")
         card.grid_rowconfigure(0, weight=1); card.grid_columnconfigure(0, weight=1)
         self._log_box = tk.Text(card, font=(MONO, 10), bg=C["panel"], fg=C["text"],
@@ -3333,6 +3383,18 @@ class App(tk.Tk):
                 lab.config(font=(UI, best[0], "bold"), height=best[1])
         except Exception:
             pass                                      # a measuring problem must never hide the message
+
+    def _copy_log(self):
+        """The system lines and the activity log as one text on the clipboard (the log box itself cannot be selected)."""
+        try:
+            lines = "\n".join(t for t, _ in self._log_lines)
+            text = f"Universal Video Downloader {APP_VER}\n{self._sys_lbl.cget('text')}\n\n{lines}\n"
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self.update()                                   # the text stays on the clipboard after the window closes
+            self._set_status("ok", "dt_copied")
+        except Exception as e:
+            self._log(f"Could not copy the log: {clean(e)[:100]}", "warn")
 
     def _time_left(self, eta):
         if eta is None:
@@ -3594,6 +3656,7 @@ class App(tk.Tk):
         d.resizable(False, False)
         wrap = int(560 * self.winfo_fpixels("1i") / 96)
         v_site, v_name, v_mail, v_ok = tk.StringVar(), tk.StringVar(), tk.StringVar(), tk.BooleanVar(value=False)
+        v_phone = tk.StringVar()
         busy = [False]
         u = self._room_var.get().strip()
         if u.lower().startswith("https://"):
@@ -3613,7 +3676,7 @@ class App(tk.Tk):
         self._label(d, self.t("enter_title"), 16, True).pack(fill=tk.X)
         tk.Label(d, text=self.t("enter_help"), font=(UI, 12), fg=C["muted"], bg=C["bg"],
                  anchor=tk.W, justify=tk.LEFT, wraplength=wrap).pack(fill=tk.X, pady=(4, 10))
-        for key, var in (("enter_site", v_site), ("enter_name", v_name), ("enter_email", v_mail)):
+        for key, var in (("enter_site", v_site), ("enter_name", v_name), ("enter_email", v_mail), ("enter_phone", v_phone)):
             self._label(d, self.t(key), 12, True).pack(fill=tk.X)
             cf, e = field(var); cf.pack(fill=tk.X, pady=(2, 8))
             if var is v_name: e_name = e
@@ -3668,7 +3731,7 @@ class App(tk.Tk):
 
             def work():
                 try:
-                    path = school_enter_room(site, nm, mail)
+                    path = school_enter_room(site, nm, mail, phone=v_phone.get().strip())
                 except LoginError as e:
                     post(lambda e=e: failed(e))
                 except Exception as e:
@@ -3693,6 +3756,11 @@ class App(tk.Tk):
                 self._rescan_cookies()
                 self._log(f"Entered the room of {host}", "ok")
                 self._set_status("ok", "enter_ok", host=host)
+                if self._url_var.get().strip().startswith("http") and not is_gc_webinar_link(self._url_var.get()):
+                    try:
+                        self._url_changed()             # a page that showed no video before the entry: look at it again
+                    except Exception:
+                        pass
                 if alive(): d.destroy()
 
             threading.Thread(target=work, daemon=True).start()

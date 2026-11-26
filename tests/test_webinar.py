@@ -182,9 +182,10 @@ class RecordingChannel:
     """A fake school channel: sends the handshake, then answers 'initAutoWebinar' with `replies`.
     Everything the client sends is kept in .got."""
 
-    def __init__(self, replies, answer_after_init=True):
+    def __init__(self, replies, answer_after_init=True, connects_itself=False):
         import base64, hashlib, socket, time
         self.replies, self.got, self.connections, self.query = replies, [], 0, ""
+        self.connects_itself = connects_itself
         self.sock = socket.socket(); self.sock.bind(("127.0.0.1", 0)); self.sock.listen(5)
         self.port = self.sock.getsockname()[1]
         self._b64, self._sha = base64, hashlib
@@ -211,6 +212,8 @@ class RecordingChannel:
             c.sendall(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
                       b"Sec-WebSocket-Accept: " + acc + b"\r\n\r\n")
             c.sendall(ws_frame(OPEN))
+            if self.connects_itself:                      # newer servers connect the namespace without being asked
+                c.sendall(ws_frame("40"))
             while True:
                 m = _mask_read(c)
                 if m is None:
@@ -246,6 +249,12 @@ class AutoChannel(unittest.TestCase):
         ch = RecordingChannel(['42["update",{"actionType":3,"status":"new"}]', video_event()])
         got = self.wait(ch)
         self.assertEqual(got, {"hash": "h" * 32 + "/" + "k" * 32, "start": 1794898200, "offset": 171})
+        ch.close()
+
+    def test_a_server_that_connects_by_itself_is_not_sent_a_second_connect(self):
+        ch = RecordingChannel([video_event()], connects_itself=True)
+        self.assertEqual(self.wait(ch)["start"], 1794898200)
+        self.assertNotIn("40", ch.got)
         ch.close()
 
     def test_the_client_joins_the_channels_and_asks_for_the_state(self):
@@ -322,6 +331,20 @@ class AutoSegments(unittest.TestCase):
         self.assertEqual(first_hdr["Cookie"], "sid=1")
         self.assertEqual(first_hdr["Referer"], "https://school.example/")
 
+    def test_server_that_takes_only_the_first_part_of_the_hash(self):
+        """Found 2026-11-26: the school sends "<32>/<32>", the video server answers 500 to that and serves the
+        first part alone."""
+        ready, _ = self.fake()
+
+        def get(url, headers):
+            if "/pl/fileservice/api/aw-master" in url:
+                jwt = b"TWO" if "hash=h%2Fk" in url else b"ONE"
+                return 200, b"/api/autoweb/get-master-playlist?jwt=" + jwt
+            if "get-master-playlist" in url and "jwt=TWO" in url:
+                return 500, b""
+            return ready(url, headers)
+        self.assertEqual(len(self.run_it(get, attempts=2)), 2)
+
     def test_busy_master_server_is_retried(self):
         get, calls = self.fake(master_status=(503, 503, 200))
         self.run_it(get)
@@ -362,6 +385,9 @@ class EnterSite(BaseHTTPRequestHandler):
 
     def do_GET(self):
         inside = "gcs=in" in (self.headers.get("Cookie") or "")
+        if self.path.startswith("/enter-done"):
+            self._send(200, "ok", [("Set-Cookie", "gcs=in; Path=/")])
+            return
         if self.path.startswith("/pl/webinar/show?id=8") or (inside and self.path.startswith("/pl/webinar/show")):
             self._send(200, "<script>window.accountUserId = 5;</script>" + PAGE)
         elif self.path.startswith("/pl/webinar/show"):
@@ -373,7 +399,8 @@ class EnterSite(BaseHTTPRequestHandler):
                     '<input type="hidden" name="formParams[willCreatePaidDeal]" value="0">'
                     '<input type="hidden" name="formParams[dealCustomFields][1]" value="utm-x">'
                     '<input type="text" name="formParams[full_name]" value="">'
-                    '<input type="text" name="formParams[email]" value=""></form>' % action)
+                    '<input type="text" name="formParams[email]" value="">'
+                    '<input type="text" name="formParams[phone]" value=""></form>' % action)
             self._send(200, "<script>window.accountUserId = -1;</script>" + ("" if EnterSite.mode == "noform" else form))
         else:
             self._send(404, "gone")
@@ -386,6 +413,8 @@ class EnterSite(BaseHTTPRequestHandler):
             self._send(200, json.dumps({"errorMessage": "Wrong data for anna@example.com"}))
         elif EnterSite.mode == "nocookie":
             self._send(200, json.dumps({"success": True}))
+        elif EnterSite.mode == "redirect":                  # the cookie is set only by the page the answer points to
+            self._send(200, json.dumps({"success": True, "data": {"redirectUrl": "/enter-done"}}))
         else:
             self._send(200, json.dumps({"success": True}), [("Set-Cookie", "gcs=in; Path=/")])
 
@@ -425,6 +454,18 @@ class EnterRoom(unittest.TestCase):
         self.assertIn("gcs\tin", text)
         self.assertNotIn(self.MAIL, text); self.assertNotIn(self.NAME, text)    # no personal data in the file
         self.assertTrue(path.startswith(self.tmp))
+
+    def test_a_phone_is_sent_only_into_a_phone_field(self):
+        vd.school_enter_room(f"{self.base}/pl/webinar/show?id=7&view=1", self.NAME, self.MAIL, timeout=5, allow_http=True, phone="+100200300")
+        self.assertEqual(EnterSite.posts[0]["formParams[phone]"], "+100200300")
+        EnterSite.posts = []
+        self.enter()                                                            # no phone given: the field is sent empty
+        self.assertEqual(EnterSite.posts[0].get("formParams[phone]", ""), "")
+
+    def test_the_page_named_in_the_answer_is_visited_to_make_the_entry_stick(self):
+        EnterSite.mode = "redirect"
+        path = self.enter()
+        self.assertIn("gcs\tin", open(path, encoding="utf-8").read())
 
     def test_a_saved_password_login_is_not_overwritten(self):
         mine = os.path.join(self.tmp, "127.0.0.1.txt")           # what school_login writes for this host
