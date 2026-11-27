@@ -13,7 +13,8 @@ large high-contrast window, English and Russian.
   the program opens every lesson, lists all the videos, and saves the ones you tick into a folder named after the course.
 - **Webinar rooms and school webinar pages.** Paste the link of a live webinar, press "Start recording" **before** it
   begins, and the program records the broadcast (480p, about 1 GB per hour) and saves it as an MP4: rooms whose video comes
-  from Rutube or VK, and GetCourse school webinar pages (`/pl/webinar/show`, also with the name-and-e-mail entry). A VK room
+  from Rutube, VK or Kinescope (a recorded Kinescope video is saved whole, picture and sound), and GetCourse school webinar
+  pages (`/pl/webinar/show`, also with the name-and-e-mail entry). A VK room
   that is already on air gives only the last half minute; after the end the program waits (up to 4 hours) for VK's own
   full recording and saves that instead.
 - **One video from a link** from Vimeo, VK, Kinescope players and about 1,700 other sites known to the download engine
@@ -38,7 +39,9 @@ The full step-by-step manual, written for beginners, is `README.txt` (English) a
   and does not try to get around the protection.
 - Log in to sites that ask for a CAPTCHA or a code sent by text message with a password: use the exported login file.
 - Windows only.
-- Webinar platforms other than Bizon365 rooms (Rutube or VK video) and GetCourse webinar pages.
+- Webinar platforms other than Bizon365 rooms (Rutube, VK or Kinescope video) and GetCourse webinar pages.
+- Record a running broadcast that sends its sound separately from the picture (the program says so).
+- Enter a webinar page that asks for a name only.
 
 ## Is it all right to download this?
 
@@ -52,7 +55,9 @@ approved by YouTube, VK, Vimeo, GetCourse, Kinescope or any other website named 
 Tested: the offline tests of the program (`python tests\test_room.py` and the other files in `tests`), real downloads of
 course lessons and a public video on a Windows 11 PC, the course-page scan on one real course, three real live webinars of a
 school (recorded, MP4 decoded without errors), and one real VK broadcast (recorded live; VK's full recording, 2 h 28 min, was
-downloaded after the end with the program's own functions and its length matched). **Not tested:** the whole VK sequence
+downloaded after the end with the program's own functions and its length matched), one whole scheduled school webinar
+(2 h, through the window of the source version), a short school live recording, and the first two minutes of a real
+Kinescope room (picture and sound). **Not tested:** a whole Kinescope room in one go, the whole VK sequence
 inside the program window, a clean second PC, Windows 10, screen scaling other than 100 %, other webinar platforms, every one
 of the 1,700 sites.
 

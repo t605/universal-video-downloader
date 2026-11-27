@@ -10,12 +10,12 @@
 - **One blue main button.** The big button that does the work (Download video, Start recording, Download ticked videos, Log in) is now blue; green means
   only "done". All texts and guides that said "green button" now say "blue button".
 - **Lighter header and a coloured status box.** The header is light with the owner's logo (on its own black tile, unchanged), the title, a green
-  "All OK" pill and the language button. The message box at the bottom is tinted by kind (neutral, working, done, warning, error) and always has words and an
-  icon, never colour alone.
-- **Measured contrast.** Text on the page 15.9:1, grey help text 7.3:1, white text on the blue button 5.4:1, status texts 4.6:1 to 7.0:1, edges of boxes and buttons at least 3.3:1.
-- **Webinar rooms that play a Kinescope video.** Bizon365 rooms (start.bizon365.ru and others) announce their video as a Kinescope recording; the program could not take that type before. It now reads the player with the room as Referer, takes the 480p stream and saves it whole, from its start, even if you press the button late. The player gives its pieces as byte ranges of one big file; the program now asks for exactly those bytes (a first try without that downloaded the whole file for every piece, 2.6 GB for two minutes). Tried on a real room: 45 seconds of work saved 25 minutes of video, 146 MB, decoded without errors. **Not tried:** the whole 2 h 43 min recording in one go, through the window.
+  "All OK" pill and the language button. The message box at the bottom is tinted by kind (neutral, working, done, warning, error) and always has words (warnings,
+  errors and success also have an icon), never colour alone.
+- **Measured contrast.** Text on the page 15.9:1, grey help text 7.3:1, white text on the blue button 5.4:1, status texts from 4.6:1 upwards, edges of boxes and buttons at least 3:1.
+- **Webinar rooms that play a Kinescope video.** Bizon365 rooms (start.bizon365.ru and others) announce their video as a Kinescope recording; the program could not take that type before. It now reads the player with the room as Referer, takes the 480p stream and saves it whole, from its start, even if you press the button late. The player gives its pieces as byte ranges of one big file; the program now asks for exactly those bytes (a first try without that downloaded the whole file for every piece, 2.6 GB for two minutes). Such a recording sends its sound as a separate track: the program saves the sound first, then the picture, and puts them together. Tried on a real room with the finished code: the first two minutes were saved with picture and sound (this video begins with about three silent minutes; short samples of its sound track further on are not silent). **Not tried:** the whole 2 h 43 min recording in one go.
 - **Scheduled school webinars connect again.** A newer school webinar server opens the connection by itself and closed it when the program sent its own "connect" message as well, so the program said "Could not connect to the school's webinar channel". The program now sends that message only if the server has not connected within two seconds. Tried on a real server before the start of a webinar: the connection stayed open for 26 seconds without errors.
-- **Scheduled school webinars whose video code has two parts.** Some schools announce the video with a code of two parts, and their video server answered "error 500" to the whole code, so no video could be saved. The program now also asks with the first part alone and takes whichever the server accepts. Tried on a real webinar: three video servers refused the whole code and accepted the first part; the whole webinar (2:00:57, 854 x 480, 984 MB) was then saved through the window in under five minutes and decoded from start to end without errors.
+- **Scheduled school webinars whose video code has two parts.** Some schools announce the video with a code of two parts, and their video server answered "error 500" to the whole code, so no video could be saved. The program now also asks with the first part alone and takes whichever the server accepts. Tried on a real webinar: three video servers refused the whole code and accepted the first part; the whole webinar (2:00:57, 854 x 480, 984 MB) was then saved through the window (of the source version, not the Setup) in under five minutes and decoded from start to end without errors.
 - **A room link without a name and e-mail.** The button "The school asks for a name and e-mail?" now also works for such room links: it puts both into the link, and you press "Start recording".
 - **Pages that want only a name and e-mail.** Some course pages say "To watch the video, log in" but ask only for a name and an e-mail (no password). The entry for that, already there for webinar rooms, is now also on the "Log in to websites" page (button "No password, only a name and e-mail?") and named in the message that says no video was found; after it the program looks at the link again.
 - **A phone number in the entry form.** Some schools ask for a name, an e-mail and a phone to enter a webinar page. The entry dialog has an optional phone field and sends it only into a phone field of the page's own form.
@@ -27,19 +27,37 @@
 - **Not changed on purpose:** corners are square (the toolkit cannot round them without rewriting every button), there is no "Settings" page (the program has none), and the program
   does not follow the Windows high-contrast mode.
 
+**Fixed after a second review, before release:**
+
+- **Sound in webinar rooms.** Test recordings made with earlier builds of 9.29 from Kinescope rooms had NO SOUND although the program reported success; record them again. Now both tracks are saved, a video without sound is never reported as done, a running broadcast with separate sound is refused with a clear message, and a VK full recording without sound never replaces the live one. If a recording is interrupted, "Convert to MP4" takes the separate sound file "name (sound).ts" along.
+- **Downloaded files are not lost.** Finished videos left in a hidden download folder (after a closed or crashed download) are moved into the download folder instead of being deleted a day later.
+- **Private links in the log.** The activity log, "Copy the log" and the log file mask personal parts of addresses, names in links, e-mail addresses and phone numbers.
+- **Safer questions.** "Log out" and the low-disk question now preselect No.
+- **Honest results.** A list download with failures is a warning, not a green success; every final recording message begins with "Done"; a missing beginning is still said when pieces are lost too.
+- **Name-and-e-mail window.** Neutral wording, consent that names the phone, the address taken from the page you came from, a typed phone also goes into a room link.
+- **Texts and guides** corrected in both languages.
+
+**Known limits (not fixed in 9.29):**
+
+- A network break of several minutes while a ready recording is being saved leaves gaps (the program says the recording is not complete; record it again).
+- A downloaded file whose name ends with a code like ".f1" can be removed as an unfinished piece.
+- "Stop and save" acts at once during a live recording. Closing during an MP4 conversion can start a second conversion pass.
+- Keyboard focus is hard to see on the blue buttons; Windows scaling of 125-150 % on a 1080p screen may hide the bottom of the window.
+- A webinar page that asks for a name only is not supported.
+
 *Built with Claude Code: the rules and decisions are the owner's, the program code was written with Claude Code.*
 
 ## Files
 
 | File | Size | SHA-256 |
 |---|---|---|
-| UniversalVideoDownloader-Setup.exe (recommended) | 51.6 MB | `E3839E710E85AE6CAA667023BBA59F2F71B97E5EAE267F4F9EAD22CCB679DC11` |
-| UniversalVideoDownloader.zip (alternative: a `.bat` launcher) | 0.1 MB | `4808F0CFC050BE4DBB29A7EF52E169245A605D7626A051C53FD37C97C95FC814` |
+| UniversalVideoDownloader-Setup.exe (recommended) | 51.6 MB | `06F81E702E69FF1270178488D34F05355D3331CDF1316445C23B839C060B1AAE` |
+| UniversalVideoDownloader.zip (alternative: a `.bat` launcher) | 0.1 MB | `772556EC2A6B27E71427569A12B64B4F991F5BEEEC0A3823938BC82FB3E9742E` |
 
 ## Tested
 
-- 186 automated offline tests pass (69 room, 20 audio and file names, 22 login, 8 scan, 7 engine, 7 texts, 53 webinar pages).
+- 214 automated offline tests pass (84 room, 22 audio and file names, 22 login, 8 scan, 7 engine, 18 texts, 53 webinar pages).
 - Every page of the window was measured in both languages at the default and the smallest size: nothing is clipped. The long status messages of the webinar recorder were measured too.
-- **Not tested:** the new window on a screen with scaling above 100 %, on a clean PC, on Windows 10 (the icons fall back to Segoe MDL2 Assets there, or are left out), with a screen reader, and by the people it is made for.
+- **Not tested:** the new window on a screen with scaling above 100 %, on a clean PC, on Windows 10 (the icons fall back to Segoe MDL2 Assets there, or are left out), with a screen reader, and by the people it is made for; a whole Kinescope room recording in one go; a whole live webinar through the window; a scheduled webinar recorded from before its start into the video; the name-and-e-mail entry succeeding on a real school (it fails on one).
 
 Everything else is as in 9.28.

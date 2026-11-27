@@ -1,17 +1,18 @@
-THIRD-PARTY NOTICES - Video Downloader
-=======================================
+THIRD-PARTY NOTICES - Universal Video Downloader
+=================================================
 
-Video Downloader itself is released under the MIT License (see the file
-LICENSE of the project). The Setup program also contains the free
+Universal Video Downloader itself is released under the MIT License (see
+the file LICENSE of the project). The Setup program also contains the free
 software below. Each part keeps its own license.
 
 1. FFmpeg (the program ffmpeg-win-x86_64-*.exe, inside the folder
    _internal\imageio_ffmpeg\binaries)
-   License: GNU General Public License version 3 (GPLv3). This FFmpeg
-   build ("essentials" build by gyan.dev) was configured with
-   --enable-gpl and --enable-version3.
-   FFmpeg is a separate program. Video Downloader starts it as a
-   separate process to join sound and picture and to convert files.
+   Version 9.0.2, "essentials" build by gyan.dev.
+   License: GNU General Public License version 3 (GPLv3). This build
+   was configured with --enable-gpl and --enable-version3.
+   FFmpeg is a separate program. Universal Video Downloader starts it
+   as a separate process to join sound and picture and to convert
+   files.
    Source code of FFmpeg: https://ffmpeg.org/download.html
    Source and build notes of this build: https://www.gyan.dev/ffmpeg/builds/
    License text: https://www.gnu.org/licenses/gpl-3.0.html
@@ -34,8 +35,8 @@ software below. Each part keeps its own license.
 The library "mutagen" (GPL) is NOT part of this program.
 
 The names YouTube, VK, Vimeo, GetCourse, Kinescope, Netflix and others
-belong to their owners. Video Downloader is not connected to them and
-not approved by them.
+belong to their owners. Universal Video Downloader is not connected to
+them and not approved by them.
 
 Built with Claude Code: the rules and decisions are the owner's, the
 program code was written with Claude Code.

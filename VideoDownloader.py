@@ -41,6 +41,54 @@ from concurrent.futures import ThreadPoolExecutor
 APP_NAME = "Universal Video Downloader"
 APP_VER  = "9.29"
 
+def _scrub_url(m) -> str:
+    """An address without anything that identifies or logs in the user: no name:password@, no ?query, no #fragment,
+    no personal code of a school's e-mail link (/g/<number>/<code>)."""
+    try:
+        p = urllib.parse.urlsplit(m.group(0))
+        netloc = p.netloc.rsplit("@", 1)[-1]
+    except ValueError:
+        return "(address)"
+    path = re.sub(r"(/g/\d+/)[^/]+", r"\1***", p.path)
+    return f"{p.scheme}://{netloc}{path}" + ("?…" if p.query or p.fragment else "")
+
+
+def scrub(text: str) -> str:
+    """Text that may be shown to a helper (activity log, "Copy the log", the log file): personal parts are masked."""
+    text = re.sub(r"https?://[^\s\"'<>]+", _scrub_url, str(text))
+    text = re.sub(r"(/g/\d+/)[A-Za-z0-9_\-]{6,}", r"\1***", text)
+    text = re.sub(r"(?i)\b(username)=[^&\n\"']+", r"\1=***", text)          # a typed name may hold spaces
+    text = re.sub(r"(?i)\b(e-?mail|phone|token|jwt|sign|hash)=[^&\s\"']+", r"\1=***", text)
+    # bounded lengths: an endless word must not freeze the window while it is searched for an e-mail address
+    return re.sub(r"[\w.+-]{1,64}(?:@|%40)[\w-]{1,63}\.[\w.-]{1,63}", "***@***", text)
+
+
+class ScrubbedFile:
+    """A text file that masks personal data in everything written to it. It has no `buffer`, so no library can write
+    around the mask."""
+
+    encoding = "utf-8"
+
+    def __init__(self, f):
+        self._f = f
+
+    def write(self, s):
+        self._f.write(scrub(s))
+        return len(s)
+
+    def flush(self):
+        self._f.flush()
+
+    def isatty(self):
+        return False
+
+    def writable(self):
+        return True
+
+    def fileno(self):
+        return self._f.fileno()
+
+
 # Under pythonw (no console) sys.stdout/stderr are None, and anything that
 # prints would crash. Send that output to a log file instead (fresh each start).
 if sys.stdout is None or sys.stderr is None:
@@ -52,6 +100,7 @@ if sys.stdout is None or sys.stderr is None:
                     encoding="utf-8", buffering=1)
     except Exception:
         _log = open(os.devnull, "w")
+    _log = ScrubbedFile(_log)
     if sys.stdout is None: sys.stdout = _log
     if sys.stderr is None: sys.stderr = _log
 
@@ -1172,13 +1221,15 @@ def room_split_link(link: str):
     return room, dict(urllib.parse.parse_qsl(p.query, keep_blank_values=True))
 
 
-def room_link_with(link: str, name: str, email: str) -> str:
-    """A Bizon365 room link (/room/...) with the viewer's name and e-mail added as the room's own link carries them
-    (username=, email=): the room then lets the program in like a viewer who filled in the entry form. Nothing is sent anywhere."""
+def room_link_with(link: str, name: str, email: str, phone: str = "") -> str:
+    """A Bizon365 room link (/room/...) with the viewer's name, e-mail (and phone, if typed) added as the room's own link
+    carries them (username=, email=, phone=): the room then lets the program in like a viewer who filled in the entry form. Nothing is sent anywhere."""
     room_split_link(link)
     p = urllib.parse.urlsplit(link.strip())
     q = dict(urllib.parse.parse_qsl(p.query, keep_blank_values=True))
     q["username"], q["email"] = name, email
+    if phone:
+        q["phone"] = phone
     return urllib.parse.urlunsplit((p.scheme, p.netloc, p.path, urllib.parse.urlencode(q), ""))
 
 
@@ -1246,7 +1297,7 @@ def gc_wait_for_playlist(url: str, origin: str, stop, poll: float = 10.0, fetch=
     return False
 
 
-# ── school LIVE webinar through the school's video service (found 2026-11-20 on t-panyushkina.com, webinar.subtype = 1) ──
+# ── school LIVE webinar through the school's video service (found 2026-11-20 on a real school page, webinar.subtype = 1) ──
 # The page's own static playlist address answers 404 (`webinarStreamViaVhBridge = true`). The real address comes from the video
 # service: the page holds a viewer token  loadWebinarVideoByStreamJwt('<jwt>')  (payload {"id": <webinar id>}); POST it as the
 # form field "jwt" to https://<api host>/api/live-master-api/v1/get-stream-info  (headers Origin/Referer = the school) ->
@@ -1890,14 +1941,59 @@ def hls_parse(text: str, base: str) -> dict:
     return {"segments": segs, "endlist": end, "init": init, "encrypted": enc}
 
 
-def hls_best_variant(text: str, base: str, max_height: int = 480) -> str:
+def _hls_sound_tracks(text: str, base: str) -> dict:
+    """For a master playlist: {audio group name: address} of the sound tracks that are a SEPARATE playlist. A group without
+    an address means the sound is inside the picture stream."""
+    groups = {}
+    for ln in (l.strip() for l in text.splitlines()):
+        if ln.startswith("#EXT-X-MEDIA:") and "TYPE=AUDIO" in ln:
+            gid, uri = re.search(r'GROUP-ID="([^"]*)"', ln), re.search(r'[:,]URI="([^"]+)"', ln)
+            if gid:
+                groups.setdefault(gid.group(1), []).append(
+                    ("DEFAULT=YES" in ln, urllib.parse.urljoin(base, uri.group(1)) if uri else ""))
+    tracks = {}
+    for name, items in groups.items():
+        main = [u for default, u in items if default]
+        if main:
+            address = main[0]                                    # the sound a player takes by itself
+        else:
+            address = items[0][1] if all(u for _, u in items) else ""
+        if address:
+            tracks[name] = address
+    return tracks
+
+
+def hls_variant_audio(text: str, base: str, variant: str) -> str:
+    """The address of the separate sound track that belongs to the stream `variant` of this master playlist, '' if its
+    sound is inside it. (Found 2026-11-26: a Kinescope room sends the sound separately; recording only the picture
+    gave a silent video.)"""
+    tracks, lines = _hls_sound_tracks(text, base), [l.strip() for l in text.splitlines()]
+    for i, ln in enumerate(lines):
+        if ln.startswith("#EXT-X-STREAM-INF"):
+            group = re.search(r'[:,]AUDIO="([^"]*)"', ln)
+            for nxt in lines[i + 1:]:
+                if nxt and not nxt.startswith("#"):
+                    if group and urllib.parse.urljoin(base, nxt) == variant:
+                        return tracks.get(group.group(1), "")
+                    break
+    return ""
+
+
+def hls_best_variant(text: str, base: str, max_height: int = 480, muxed_only: bool = False) -> str:
     """For a master playlist: the address of the stream to record, else ''. Like every download in this program the
     recording is made in 480p (owner's rule, 2026-11-20: a webinar in 720p was 8 GB for 3 hours, in 480p it is about 3 GB):
     the sharpest stream that is not higher than `max_height`; if every stream is higher, the lowest one; if the playlist
-    names no picture sizes, the highest bandwidth up to 1.6 Mbit/s, else the lowest bandwidth."""
+    names no picture sizes, the highest bandwidth up to 1.6 Mbit/s, else the lowest bandwidth.
+    muxed_only=True looks only at streams that carry their own sound."""
     items, lines = [], [l.strip() for l in text.splitlines()]
+    separate = _hls_sound_tracks(text, base) if muxed_only else {}
     for i, ln in enumerate(lines):
         if ln.startswith("#EXT-X-STREAM-INF"):
+            group = re.search(r'[:,]AUDIO="([^"]*)"', ln)
+            if group and group.group(1) in separate:
+                continue
+            if separate and "RESOLUTION=" not in ln:             # beside separate sound, this is a sound-only stream
+                continue
             m = re.search(r"BANDWIDTH=(\d+)", ln)
             r = re.search(r"RESOLUTION=\d+x(\d+)", ln)
             for nxt in lines[i + 1:]:
@@ -1923,8 +2019,41 @@ def unique_path(folder: str, stem: str, ext: str) -> str:
     return out
 
 
+def sound_beside(ts: str) -> str:
+    """The separate sound file of a raw recording ("name.ts" -> "name (sound).ts"), '' if there is none."""
+    stem, ext = os.path.splitext(ts)
+    other = stem + " (sound).ts"
+    return other if ext.lower() == ".ts" and os.path.isfile(other) else ""
+
+
 # leftovers of an unfinished download: partial files and the unmerged video/audio pieces yt-dlp names "name.f137.mp4"
-_UNFINISHED = re.compile(r"\.(part|ytdl|temp|tmp)$|\.f\d+(-[\w.]+)?\.[A-Za-z0-9]+$", re.I)
+_UNFINISHED = re.compile(r"\.(part|ytdl|temp|tmp)$|\.part-Frag\d+$|\.temp\.[A-Za-z0-9]+$|\.f\d+(-[\w.]+)?\.[A-Za-z0-9]+$", re.I)
+
+
+def _deliver(folder: str, dest: str):
+    """Move every finished file of a hidden download folder into `dest` under a free name, delete the unfinished pieces,
+    then remove the folder if it is empty. A file that cannot be moved stays where it is - it is never deleted."""
+    try:
+        names = sorted(os.listdir(folder))
+    except OSError:
+        return
+    sources = {os.path.splitext(f)[0] for f in names if os.path.splitext(f)[1].lower() in (".webm", ".m4a", ".opus", ".ogg", ".mp4")}
+    for f in names:
+        src = os.path.join(folder, f)
+        stem, ext = os.path.splitext(f)
+        half_mp3 = ext.lower() == ".mp3" and stem in sources    # the source is removed only after a whole MP3
+        try:
+            if _UNFINISHED.search(f) or half_mp3:
+                os.remove(src)
+            else:
+                stem, ext = os.path.splitext(f)
+                shutil.move(src, unique_path(dest, stem, ext))
+        except OSError:
+            pass
+    try:
+        os.rmdir(folder)                                        # only succeeds when nothing was left behind
+    except OSError:
+        pass
 
 
 def run_into_free_names(o: dict, run):
@@ -1940,7 +2069,7 @@ def run_into_free_names(o: dict, run):
         for d in os.listdir(dest):
             q = os.path.join(dest, d)
             if d.startswith(".vdl_") and os.path.isdir(q) and time.time() - os.path.getmtime(q) > 86400:
-                shutil.rmtree(q, ignore_errors=True)
+                _deliver(q, dest)                                # finished videos in it are rescued, not deleted
     except OSError:
         pass
     tmp = os.path.join(dest, ".vdl_" + os.urandom(4).hex())
@@ -1955,20 +2084,7 @@ def run_into_free_names(o: dict, run):
     try:
         return run(o2)
     finally:
-        for f in sorted(os.listdir(tmp)):
-            src = os.path.join(tmp, f)
-            try:
-                if _UNFINISHED.search(f):
-                    os.remove(src)
-                else:
-                    stem, ext = os.path.splitext(f)
-                    shutil.move(src, unique_path(dest, stem, ext))
-            except OSError:
-                pass                                             # a file that cannot be moved stays in the hidden folder
-        try:
-            os.rmdir(tmp)                                        # only succeeds when nothing was left behind
-        except OSError:
-            pass
+        _deliver(tmp, dest)
 
 
 def fmt_hms(sec: float) -> str:
@@ -2114,6 +2230,11 @@ class RoomRecorder:
                     if not self.master_checked:             # a master list: take its best stream
                         self.master_checked = True
                         best = hls_best_variant(text, self.playlist)
+                        if best and hls_variant_audio(text, self.playlist, best):
+                            # this recorder saves ONE stream: take one that has its own sound, never a silent picture
+                            best = hls_best_variant(text, self.playlist, muxed_only=True)
+                            if not best:
+                                raise RoomError("room_err_audio")
                         if best:
                             self.log("   Master playlist; using the best stream")
                             self.playlist = best
@@ -2220,19 +2341,13 @@ T = {
     st_converted="Done! The MP4 file is saved next to the original.",
     st_conv_failed="The conversion did not work. The original file is untouched.",
     nav_room="Record a webinar room", room_title="Record a webinar room",
-    room_help="1. Paste the link of a webinar room (the address contains /room/ or /pl/webinar/show).\n"
-              "2. Press “Start recording” BEFORE the webinar begins.\n"
-              "3. Keep this window open and do not let the computer go to sleep until it says Done (plugged in, laptop lid open). "
-              "Plan about 1 GB of free disk space per hour.\n"
-              "If the broadcast is already on air, its beginning cannot be recorded live; for VK the program then waits after the end "
-              "(up to 4 hours) for VK's own full recording. Before the broadcast starts, “Stop and save” cancels; later it saves what is recorded.",
+    room_help="1. Paste the link of a webinar room (the address contains /room/ or /pl/webinar/show).\n2. Press “Start recording” BEFORE the webinar begins.\n3. Keep this window open and the computer awake until the message begins with “Done” (laptop: plugged in, lid open). About 1 GB of disk space per hour.\nA live broadcast already on air: its beginning cannot be recorded (a ready recording is saved whole); for VK the program waits up to 4 hours for the full one.\n“Stop and save”: before the broadcast it cancels, later it saves.",
     room_start="Start recording", room_stop="Stop and save", recording="Recording...",
     st_room_signin="Entering the webinar room...",
     st_room_wait="Waiting for the broadcast to begin. Keep this window open.",
     st_room_rec="Recording the broadcast...  recorded so far: {t} (hours:minutes:seconds)",
-    st_room_rec_vod="Saving the recorded webinar from its very start...  saved so far: {t} of {total} (hours:minutes:seconds). This is a ready recording, not a live broadcast, so it is saved faster than the webinar runs.",
-    st_room_rec_late="Recording...  recorded so far: {t} (hours:minutes:seconds). The broadcast was already on air "
-                     "when the recording started, so its beginning is not in this recording. For VK, the program will try to fetch the full recording after the end.",
+    st_room_rec_vod="Saving the recorded webinar from its very start...  saved so far: {t} of {total} (hours:minutes:seconds). This is an already finished recording, so it is saved faster than the webinar runs. Do not close this window.",
+    st_room_rec_late="Recording...  recorded so far: {t} (hours:minutes:seconds). The broadcast was already on air when the recording started, so its beginning is not in this recording. If this is a VK broadcast, the program will try to fetch the full recording after the end.",
     st_room_wait_full="The broadcast has ended. Waiting for VK's full recording, so that the whole webinar is in the video. Waited: {w}, at most {r} left. You may do other things; keep the laptop plugged in and the lid and this window open. “Stop and save” keeps what is recorded.",
     st_room_getting_full="VK's full recording was found. Downloading it now. Downloaded so far: {t} "
                          "(hours:minutes:seconds). The beginning of the webinar is included. Keep this window open.",
@@ -2245,21 +2360,15 @@ T = {
     st_room_nothing="Nothing could be recorded from this room. The broadcast may not have "
                     "started yet. Try again when the webinar is on air.",
     st_room_done="Done! The recording ({t}) is saved as an MP4 in your download folder.",
-    st_room_done_late="Saved, but not complete: the beginning is missing, because the broadcast was already on air when the "
-                      "recording started. The recording ({t}) is saved as an MP4 in your download folder.",
-    st_room_done_late_nofull="Saved, but not complete: the beginning is missing, VK did not publish its full recording. The recording ({t}) is saved as an MP4. "
-                             "Later your helper can download the full video from VK (paste its address on the main screen).",
+    st_room_done_late="Done, but not complete: the beginning is missing, because the broadcast was already on air when the recording started. The recording ({t}) is saved as an MP4 in your download folder.",
+    st_room_done_late_nofull="Done, but not complete: the beginning is missing, and VK did not publish its full recording. The recording ({t}) is saved as an MP4. Later your helper can download the full video from VK (paste its address on the main screen).",
     st_room_done_kept="Done! The recording ({t}) is saved as an MP4 in your download folder. "
                       "The unprocessed copy (.ts) was kept too; delete it once the MP4 plays well.",
-    st_room_done_skipped="Done, but some short pieces could not be downloaded (number: {n}), so the video "
-                         "may jump. The MP4 is in your download folder. The unprocessed "
-                         "copy (.ts) was kept too.",
+    st_room_done_skipped="Done, but not complete: some short pieces could not be downloaded (number: {n}), so the video may jump. If the school keeps the recording, record it again. The MP4 and a copy (.ts) are in your download folder.",
     st_room_done_check="Done, but the length of the video ({t}) does not match what was "
                        "downloaded. Check that the MP4 plays to the end. The unprocessed "
                        "copy (.ts) was kept too.",
-    st_room_done_stalled="The broadcast sent no video for {m} minutes, so the recording ended "
-                         "there. The MP4 ({t}) is in your download folder. The unprocessed "
-                         "copy (.ts) was kept too.",
+    st_room_done_stalled="Done, but maybe not complete: the broadcast sent no video for {m} minutes, so the recording ended there. The MP4 ({t}) is in your download folder. The unprocessed copy (.ts) was kept too.",
     dl_close_title="Download in progress",
     dl_close_ask="The program is still working (downloading or making a video). If you close it now, the work stops and the video will not be finished. Close anyway?",
     room_close_title="Recording in progress",
@@ -2269,25 +2378,25 @@ T = {
                    "your download folder; “Convert to MP4” can turn it into a video later. Close anyway?",
     room_err_link="This link does not look like a webinar. The address must contain /room/ (a webinar room) or /pl/webinar/show (a school's own webinar page). Copy the address of the page where the webinar is shown.",
     room_err_gc_page="The webinar page could not be opened. Log in to the school first (“Log in to websites”), then try again. If the school has no password, press the button “The school asks for a name and e-mail?” on this page.",
-    room_err_gc_nostream="This webinar page holds no broadcast address: the program is probably not logged in to the school. If the school has no password, use a login file (“Log in to websites”, three steps), then try again.",
-    room_err_gc_socket="Could not connect to the school's webinar channel. Wait one minute, then press “Start recording” again. If it keeps failing, the webinar is probably over: the school no longer shows the video of a finished webinar. Tell the person who helps you.",
+    room_err_gc_nostream="No broadcast address: the school has probably not let the program in. If the page asks for a name and e-mail, press “The school asks for a name and e-mail?”, then “Start recording”. With a password: “Log in to websites”.",
+    room_err_gc_socket="No connection to the school's webinar channel, so NOTHING is being recorded. Check the internet and press “Start recording” again. If the webinar time has not passed yet, keep trying and call your helper. (After a webinar has ended, the school no longer shows its video.)",
     room_err_gc_info="The school did not give the video list for this webinar. Wait a minute and try again. If it keeps failing, tell the person who helps you.",
     enter_btn="The school asks for a name and e-mail?  Enter the room here...",
     enter_btn_site="No password, only a name and e-mail?  Enter here...",
     enter_title="Enter with a name and e-mail",
-    enter_help="Use this only if the webinar page shows a small form (your name and e-mail and a button “Enter the room”) and the school has no password. The program fills in that form for you, in the same way as your browser does. Your name and e-mail are sent only to this school and are not saved by the program.",
+    enter_help="Use this only if a page of the school asks for a name and an e-mail (no password). The program fills in that form for you, as your browser does. What you type is sent only to this school; the program does not keep your name or e-mail.",
     enter_site="Web address of the page (the one you paste):",
     enter_name="Your name (as in the school's form):",
     enter_phone="Your phone (only if the form asks for it; otherwise leave empty):",
     enter_email="Your e-mail (the one you registered with):",
-    enter_consent="I agree that the program sends my name and e-mail to the school, as the school's own form does.",
-    enter_go="Enter the room",
-    enter_busy="Entering the room - this can take up to about a minute. Please wait...",
+    enter_consent="I agree: the program sends my name, e-mail and phone (if typed) to the school, as the school's own form does.",
+    enter_go="Enter",
+    enter_busy="Entering - this can take up to about a minute. Please wait...",
     enter_err_empty="Fill in the web address (it starts with https://), your name and your e-mail, and tick the box.",
-    enter_room_in_link="Your name and e-mail are now in the link. Press “Start recording”.",
+    enter_room_in_link="Your details are now in the room link. Press “Start recording”.",
     enter_err_form="This page shows no entry form. If you are already inside in your browser, use a login file instead (“Log in to websites”: add-on, log in, “Export”).",
     enter_err_fail="The school did not let the program in.",
-    enter_ok="Entered {host}. Now use the page again: for a video press “Paste link”, for a webinar press “Start recording”.",
+    enter_ok="Entered {host}. Next: for a video open “Download video”; for a webinar open “Record a webinar” and press “Start recording”.",
     room_err_signin="The room did not let the program in. Open the link in your browser to "
                     "check that it still works. If it does not, ask the school for a new link.",
     room_err_closed="The room still shows its entry form. The link may be old or "
@@ -2302,6 +2411,12 @@ T = {
                 "Wait five minutes and press “Start recording” again. If it fails again, tell the "
                 "person who helps you.",
     room_err_enc="This broadcast is encrypted (copy-protected). The program cannot record it and does not try to get around the protection. Watch it on the website.",
+    room_err_audio="This broadcast sends the sound separately from the picture, and the program cannot record such a running broadcast. If the school publishes the recording later, press “Start recording” again then, or ask your helper.",
+    room_err_sound="The sound of this webinar could not be downloaded completely, so the video was not saved. Check the internet and press “Start recording” again.",
+    st_room_rec_sound="Saving the sound of the recorded webinar first, then the picture. Please do not close this window.",
+    st_room_done_noaudio="Done, but WITHOUT SOUND, so this recording is not good. The .ts file in the download folder was kept. Please show this message to your helper.",
+    st_room_done_late_gaps="Done, but not complete: the beginning is missing (the broadcast was already on air), and the rest may have gaps or end early. The recording ({t}) is in your download folder; the unprocessed copy (.ts) was kept too.",
+    st_done_part="Not all videos were saved: {ok} of {n}. Try again, or ask your helper (page “Details for helper”).",
     room_err_stream="The room gave a link to the video that the program could not open. "
                     "Tell the person who helps you and say the video link did not open.",
     room_err_disk="The recording could not be written. The disk may be full. Free some "
@@ -2339,8 +2454,7 @@ T = {
     d_private="This video is private — the website needs to know you are logged in. "
               "Set up “Log in to websites”.",
     d_not_video="This address is not a video page, or this website is not supported.",
-    d_no_player="No video was found on this page. If it is a private lesson, log in first "
-                "(press the button “Log in” below). If the page asks only for a name and e-mail, use “No password, only a name and e-mail?” on the “Log in to websites” page. Otherwise this website may not be supported.",
+    d_no_player="No video was found on this page. If the page asks only for a name and e-mail: open “Log in to websites” and press “No password, only a name and e-mail?”. If it is a private lesson with a password, press “Log in” on the right. Otherwise this website may not be supported.",
     d_drm="This video is copy-protected (DRM), like films on Netflix. Your login is fine — this program cannot save it and does not try to get around the protection. Watch it on the website or in its app.",
     d_network="No internet connection, or the website is not answering. "
               "Try again in a minute.",
@@ -2361,7 +2475,7 @@ T = {
               "“Log in to websites” and try again.",
     scan_front="This is the website's front page. Open the lesson or channel you want "
                "and copy that address.",
-    scan_found="Found {n} videos. Untick any you don't want, then press the blue button. They will be saved in: {folder}.",
+    scan_found="Found {n} videos. Untick any you don't want, then press “Download ticked videos”. They will be saved in: {folder}.",
     scan_reading="Reading lesson {i} of {n}...",
     room_low_disk="Only {gb} GB are free on the drive where videos are saved. That is enough for about {h} h of webinar (the recording, and then the MP4). If the webinar is longer, press No and free some space. Record anyway?",
     no_page="First copy the page's address, then press “Paste link”.",
@@ -2376,8 +2490,7 @@ T = {
     ck_files="Login files found on this computer",
     ck_browse="Choose file...", ck_rescan="Look again", ck_forget="Stop using",
     ck_forget_q="Stop using the login file?\n\nThe file stays on the computer.",
-    ck_list_none="   None yet — public videos work without it. "
-                 "Follow the steps above when needed.",
+    ck_list_none="   None yet — public videos work without it.",
     ck_sites="{n} websites", ck_imported="Login file found: {name}",
     ck_bad_file="That file is not a login (cookies.txt) file.",
     ck_pick="Choose the cookies.txt file",
@@ -2389,7 +2502,7 @@ T = {
     login_email="E-mail or username:", login_pass="Password:",
     login_show="Show the password", login_go="Log in", login_cancel="Cancel",
     login_busy="Logging in - this can take up to about a minute. Please wait...",
-    login_ok="Logged in to {host}. For one video, press the blue “Download video” button. For a whole course, open “Several videos on one page”.",
+    login_ok="Logged in to {host}. For one video, press the blue “Download video” button. For a whole course, open “Several videos”.",
     login_ok_unchecked="Logged in to {host}, but the lesson page could not be opened to check it. Try it: one video - the blue “Download video” button; a whole course - “Several videos on one page”.",
     login_err_empty="Fill in the web address (it starts with https://), the e-mail or username, "
                     "and the password.",
@@ -2463,19 +2576,13 @@ T = {
     st_converted="Готово! Файл MP4 сохранён рядом с исходным.",
     st_conv_failed="Преобразовать не получилось. Исходный файл не тронут.",
     nav_room="Записать вебинарную комнату", room_title="Записать вебинарную комнату",
-    room_help="1. Вставьте ссылку на вебинар (в адресе есть /room/ или /pl/webinar/show).\n"
-              "2. Нажмите «Начать запись» ДО начала вебинара.\n"
-              "3. Не закрывайте окно и не давайте компьютеру заснуть (ноутбук включите в розетку, крышку не закрывайте), пока не появится "
-              "«Готово». На каждый час вебинара нужно около 1 ГБ места на диске.\n"
-              "Если эфир уже идёт, начало вживую записать нельзя; для VK программа после конца эфира ждёт полную запись от VK (до 4 часов). "
-              "До начала эфира «Остановить и сохранить» отменяет запись, потом сохраняет записанное.",
+    room_help="1. Вставьте ссылку на вебинар (в адресе есть /room/ или /pl/webinar/show).\n2. Нажмите «Начать запись» ДО начала вебинара.\n3. Не закрывайте окно и не давайте компьютеру заснуть, пока не появится «Готово» (ноутбук: в розетке, крышка открыта). Около 1 ГБ на диске на час.\nЕсли прямой эфир уже идёт, начала не записать (готовая запись сохраняется целиком); для VK программа ждёт полную запись до 4 часов.\n«Остановить и сохранить»: до эфира отменяет, потом сохраняет.",
     room_start="Начать запись", room_stop="Остановить и сохранить", recording="Запись...",
     st_room_signin="Захожу в комнату вебинара...",
     st_room_wait="Жду начала трансляции. Не закрывайте это окно.",
     st_room_rec="Идёт запись трансляции...  записано: {t} (часы:минуты:секунды)",
-    st_room_rec_vod="Сохраняю запись вебинара с самого начала...  сохранено: {t} из {total} (часы:минуты:секунды). Это готовая запись, а не прямой эфир, поэтому она сохраняется быстрее, чем идёт вебинар.",
-    st_room_rec_late="Идёт запись...  записано: {t} (часы:минуты:секунды). Эфир уже шёл, когда запись "
-                     "началась, поэтому начала вебинара в записи не будет. Для VK программа сама попробует скачать полную запись после конца эфира.",
+    st_room_rec_vod="Сохраняю запись вебинара с самого начала...  сохранено: {t} из {total} (часы:минуты:секунды). Это уже законченная запись, поэтому она сохраняется быстрее, чем идёт вебинар. Не закрывайте это окно.",
+    st_room_rec_late="Идёт запись...  записано: {t} (часы:минуты:секунды). Эфир уже шёл, когда запись началась, поэтому начала вебинара в записи не будет. Если это эфир VK, программа после конца попробует скачать полную запись.",
     st_room_wait_full="Эфир закончился. Жду полную запись от VK, чтобы в видео был весь вебинар. Прошло: {w}, осталось не больше {r}. Можно заниматься другими делами; ноутбук в розетке, крышка и это окно открыты. «Остановить и сохранить» оставит записанное.",
     st_room_getting_full="Полная запись от VK найдена. Скачиваю её. Скачано: {t} (часы:минуты:секунды). "
                          "Начало вебинара в ней есть. Не закрывайте окно.",
@@ -2488,21 +2595,15 @@ T = {
     st_room_nothing="Из этой комнаты ничего не удалось записать. Возможно, трансляция ещё не "
                     "началась. Попробуйте ещё раз, когда вебинар идёт.",
     st_room_done="Готово! Запись ({t}) сохранена в MP4 в вашей папке загрузок.",
-    st_room_done_late="Запись сохранена, но неполная: нет начала вебинара, потому что эфир уже шёл, когда запись началась. "
-                      "Запись ({t}) сохранена в MP4 в вашей папке загрузок.",
-    st_room_done_late_nofull="Запись сохранена, но неполная: нет начала вебинара, VK не опубликовал полную запись. Запись ({t}) сохранена в MP4. "
-                             "Полное видео можно позже скачать с VK: попросите помощника найти его адрес.",
+    st_room_done_late="Готово, но запись неполная: нет начала вебинара, потому что эфир уже шёл, когда запись началась. Запись ({t}) сохранена в MP4 в вашей папке загрузок.",
+    st_room_done_late_nofull="Готово, но запись неполная: нет начала вебинара, и VK не опубликовал полную запись. Запись ({t}) сохранена в MP4. Полное видео можно позже скачать с VK: попросите помощника найти его адрес.",
     st_room_done_kept="Готово! Запись ({t}) сохранена в MP4 в вашей папке загрузок. Исходная "
                       "копия (.ts) тоже оставлена; удалите её, когда убедитесь, что MP4 "
                       "воспроизводится.",
-    st_room_done_skipped="Готово, но несколько коротких фрагментов не удалось загрузить (их число: {n}), "
-                         "поэтому в видео могут быть скачки. Файл MP4 лежит в папке загрузок. Исходная "
-                         "копия (.ts) тоже оставлена.",
+    st_room_done_skipped="Готово, но запись неполная: не загрузились некоторые фрагменты (их число: {n}), в видео могут быть скачки. Если школа хранит запись, запишите ещё раз. MP4 и копия (.ts) в папке загрузок.",
     st_room_done_check="Готово, но длина видео ({t}) не совпадает с загруженным. Проверьте, "
                        "что MP4 воспроизводится до конца. Исходная копия (.ts) тоже оставлена.",
-    st_room_done_stalled="Трансляция не передавала видео {m} мин., поэтому запись закончена "
-                         "на этом месте. Файл MP4 ({t}) лежит в папке загрузок. Исходная "
-                         "копия (.ts) тоже оставлена.",
+    st_room_done_stalled="Готово, но запись, возможно, неполная: трансляция не передавала видео {m} мин., поэтому запись закончена на этом месте. Файл MP4 ({t}) лежит в папке загрузок. Исходная копия (.ts) тоже оставлена.",
     dl_close_title="Идёт загрузка",
     dl_close_ask="Программа ещё работает (скачивает или делает видео). Если закрыть её сейчас, работа остановится, и видео не будет закончено. Всё равно закрыть?",
     room_close_title="Идёт запись",
@@ -2512,25 +2613,25 @@ T = {
                    "превратить в видео кнопкой «Сделать MP4». Всё равно закрыть?",
     room_err_link="Эта ссылка не похожа на вебинар. В адресе должно быть /room/ (вебинарная комната) или /pl/webinar/show (страница вебинара школы). Скопируйте адрес страницы, где показывают вебинар.",
     room_err_gc_page="Страницу вебинара не удалось открыть. Сначала войдите на сайт школы («Вход на сайты») и повторите. Если у школы нет пароля, нажмите на этой странице кнопку «Школа просит имя и электронную почту?».",
-    room_err_gc_nostream="На странице вебинара нет адреса трансляции: программа, скорее всего, не вошла на сайт школы. Если у школы нет пароля, используйте файл входа («Вход на сайты», три шага) и повторите.",
-    room_err_gc_socket="Не удалось подключиться к каналу вебинара школы. Подождите минуту и снова нажмите «Начать запись». Если не получается, вебинар, скорее всего, уже закончился: школа не показывает видео закончившегося вебинара. Сообщите тому, кто вам помогает.",
+    room_err_gc_nostream="Нет адреса трансляции: школа, вероятно, не впустила программу. Если страница просит имя и почту, нажмите «Школа просит имя и электронную почту?», потом «Начать запись». Есть пароль — «Вход на сайты».",
+    room_err_gc_socket="Нет связи с каналом вебинара школы, поэтому запись НЕ идёт. Проверьте интернет и снова нажмите «Начать запись». Если время вебинара ещё не прошло, повторяйте и позовите помощника. (После конца вебинара школа его видео уже не показывает.)",
     room_err_gc_info="Школа не выдала список видео этого вебинара. Подождите минуту и попробуйте ещё раз. Если не получится, сообщите тому, кто вам помогает.",
     enter_btn="Школа просит имя и электронную почту?  Войти в комнату здесь...",
     enter_btn_site="Нет пароля, только имя и почта?  Войти здесь...",
     enter_title="Вход по имени и почте",
-    enter_help="Нужно, только если страница вебинара показывает небольшую форму (имя, электронная почта и кнопка «Войти в комнату»), а пароля у школы нет. Программа заполнит эту форму за вас, так же, как это делает браузер. Ваше имя и почта отправляются только этой школе, программа их не сохраняет.",
+    enter_help="Нужно, только если страница школы просит имя и электронную почту (без пароля). Программа заполнит эту форму за вас, как это делает браузер. Введённое отправляется только этой школе; имя и почту программа не хранит.",
     enter_site="Адрес страницы (тот, который вы вставляете):",
     enter_name="Ваше имя (как в форме школы):",
     enter_phone="Ваш телефон (только если форма его просит; иначе оставьте пустым):",
     enter_email="Ваша электронная почта (с которой вы регистрировались):",
-    enter_consent="Я согласен, что программа отправит моё имя и почту школе, как это делает форма самой школы.",
-    enter_go="Войти в комнату",
-    enter_busy="Выполняется вход в комнату — это может занять до минуты. Подождите...",
+    enter_consent="Согласие: программа отправит школе моё имя, почту и телефон (если указан), как это делает форма самой школы.",
+    enter_go="Войти",
+    enter_busy="Выполняется вход — это может занять до минуты. Подождите...",
     enter_err_empty="Заполните адрес (он начинается с https://), имя и электронную почту и поставьте галочку.",
-    enter_room_in_link="Ваше имя и почта вставлены в ссылку. Нажмите «Начать запись».",
+    enter_room_in_link="Ваши данные вставлены в ссылку комнаты. Нажмите «Начать запись».",
     enter_err_form="На этой странице нет формы входа. Если в браузере вы уже внутри, используйте файл входа («Вход на сайты»: дополнение, вход на сайт, «Export»).",
     enter_err_fail="Школа не пустила программу.",
-    enter_ok="Вход на {host} выполнен. Теперь пользуйтесь страницей снова: для видео нажмите «Вставить ссылку», для вебинара «Начать запись».",
+    enter_ok="Вход на {host} выполнен. Дальше: для видео откройте «Скачать видео»; для вебинара — «Записать вебинар» и нажмите «Начать запись».",
     room_err_signin="Комната не пустила программу. Откройте ссылку в браузере и проверьте, "
                     "что она ещё работает. Если нет — попросите у школы новую ссылку.",
     room_err_closed="Комната всё ещё показывает форму входа. Возможно, ссылка устарела или "
@@ -2546,6 +2647,12 @@ T = {
                 "и снова нажмите «Начать запись». Если снова не получится, сообщите тому, кто вам "
                 "помогает.",
     room_err_enc="Эта трансляция зашифрована (защищена от копирования). Программа не может её записать и не пытается обойти защиту. Смотрите её на сайте.",
+    room_err_audio="В этой трансляции звук передаётся отдельно от картинки, и такой прямой эфир программа записать не может. Если школа позже опубликует запись, снова нажмите «Начать запись» или позовите помощника.",
+    room_err_sound="Не удалось полностью загрузить звук этого вебинара, поэтому видео не сохранено. Проверьте интернет и снова нажмите «Начать запись».",
+    st_room_rec_sound="Сначала сохраняю звук записанного вебинара, потом картинку. Не закрывайте это окно.",
+    st_room_done_noaudio="Готово, но БЕЗ ЗВУКА, поэтому эта запись неудачная. Файл .ts в папке загрузок оставлен. Покажите это сообщение помощнику.",
+    st_room_done_late_gaps="Готово, но запись неполная: нет начала вебинара (эфир уже шёл), а дальше могут быть пропуски или запись оборвалась раньше. Запись ({t}) лежит в папке загрузок; исходная копия (.ts) тоже оставлена.",
+    st_done_part="Сохранены не все видео: {ok} из {n}. Попробуйте ещё раз или позовите помощника (раздел «Для помощника»).",
     room_err_stream="Комната дала ссылку на видео, которую программа не смогла открыть. "
                     "Сообщите тому, кто вам помогает, что ссылка на видео не открылась.",
     room_err_disk="Не удалось записать файл. Возможно, на диске нет места. Освободите место "
@@ -2586,8 +2693,7 @@ T = {
     d_private="Это закрытое видео — сайту нужно знать, что вы вошли. Настройте "
               "«Вход на сайты».",
     d_not_video="По этому адресу нет видео, или этот сайт не поддерживается.",
-    d_no_player="На этой странице не найдено видео. Если это закрытый урок, сначала войдите "
-                "(нажмите кнопку «Войти» ниже). Если страница просит только имя и почту, нажмите «Нет пароля, только имя и почта?» на странице «Вход на сайты». Иначе этот сайт может не поддерживаться.",
+    d_no_player="На этой странице не найдено видео. Если страница просит только имя и почту: откройте «Вход на сайты» и нажмите «Нет пароля, только имя и почта?». Если это закрытый урок с паролем, нажмите кнопку «Войти» справа. Иначе этот сайт может не поддерживаться.",
     d_drm="Это видео защищено от копирования (DRM), как фильмы на Netflix. С вашим входом всё в порядке — эта программа не может его сохранить и не пытается обойти защиту. Смотрите его на сайте или в приложении сайта.",
     d_network="Нет интернета, или сайт не отвечает. Попробуйте через минуту.",
     d_other="Что-то пошло не так. Помощник увидит подробности в разделе "
@@ -2607,7 +2713,7 @@ T = {
               "«Вход на сайты» и попробуйте снова.",
     scan_front="Это главная страница сайта. Откройте нужный урок или канал и "
                "скопируйте его адрес.",
-    scan_found="Найдено видео: {n}. Снимите отметку с ненужных и нажмите синюю кнопку. Они будут сохранены в папку: {folder}.",
+    scan_found="Найдено видео: {n}. Снимите отметку с ненужных и нажмите «Скачать отмеченные». Они будут сохранены в папку: {folder}.",
     scan_reading="Читаю урок {i} из {n}...",
     room_low_disk="На диске, куда сохраняются видео, свободно только {gb} ГБ. Этого хватит примерно на {h} ч вебинара (запись, а потом MP4). Если вебинар длиннее, нажмите «Нет» и освободите место. Всё равно записывать?",
     no_page="Сначала скопируйте адрес страницы и нажмите «Вставить ссылку».",
@@ -2622,8 +2728,7 @@ T = {
     ck_files="Файлы входа на этом компьютере",
     ck_browse="Выбрать файл...", ck_rescan="Искать снова", ck_forget="Не использовать",
     ck_forget_q="Перестать использовать файл входа?\n\nСам файл останется на компьютере.",
-    ck_list_none="   Пока нет — открытые видео скачиваются и без него. "
-                 "При необходимости выполните шаги выше.",
+    ck_list_none="   Пока нет — открытые видео скачиваются и без него.",
     ck_sites="сайтов: {n}", ck_imported="Найден файл входа: {name}",
     ck_bad_file="Этот файл — не файл входа (cookies.txt).",
     ck_pick="Выберите файл cookies.txt",
@@ -2634,7 +2739,7 @@ T = {
     login_email="Электронная почта или логин:", login_pass="Пароль:",
     login_show="Показать пароль", login_go="Войти", login_cancel="Отмена",
     login_busy="Выполняется вход - это может занять до минуты. Подождите...",
-    login_ok="Вход на {host} выполнен. Для одного видео нажмите синюю кнопку «Скачать видео». Для всего курса откройте «Несколько видео на странице».",
+    login_ok="Вход на {host} выполнен. Для одного видео нажмите синюю кнопку «Скачать видео». Для всего курса откройте «Несколько видео».",
     login_ok_unchecked="Вход на {host} выполнен, но страницу урока не удалось открыть для проверки. Попробуйте: одно видео — синяя кнопка «Скачать видео»; весь курс — «Несколько видео на странице».",
     login_err_empty="Заполните адрес (он начинается с https://), электронную почту или логин и пароль.",
     login_err_https="Адрес должен начинаться с https:// — пароль никогда не отправляется по незащищённому соединению.",
@@ -3409,7 +3514,7 @@ class App(tk.Tk):
     # ── LOG (on the Details page) ──────────────────────────────────────────
 
     def _log(self, msg, tag="plain"):
-        text = clean(msg)
+        text = scrub(clean(msg))                # the one place: nothing personal reaches the log or its copy
         self._log_lines.append((text, tag))
         del self._log_lines[:-2000]
         self._log_insert(text, tag)
@@ -3649,6 +3754,14 @@ class App(tk.Tk):
         d.geometry(f"+{x}+{y}")
         (e_mail if v_site.get() else e_site).focus_set()
 
+    def _entry_link(self):
+        """The address the name-and-e-mail window starts with: the box of the page the user came from."""
+        main, room = self._url_var.get().strip(), self._room_var.get().strip()
+        for u in ((room, main) if self._page == "room" else (main, room)):
+            if u.lower().startswith("https://"):
+                return u
+        return ""
+
     def _open_enter_room(self):
         """'Enter the room' for a school without a password: name + e-mail form (school_enter_room)."""
         d = tk.Toplevel(self); d.title(self.t("enter_title"))
@@ -3658,9 +3771,7 @@ class App(tk.Tk):
         v_site, v_name, v_mail, v_ok = tk.StringVar(), tk.StringVar(), tk.StringVar(), tk.BooleanVar(value=False)
         v_phone = tk.StringVar()
         busy = [False]
-        u = self._room_var.get().strip()
-        if u.lower().startswith("https://"):
-            v_site.set(u)
+        v_site.set(self._entry_link())
 
         def field(var):
             cf = _cardf(d)
@@ -3715,9 +3826,10 @@ class App(tk.Tk):
                 msg.config(text=self.t("enter_err_empty"), fg=C["red"]); return
             if not is_gc_webinar_link(site):
                 try:                                              # a webinar-room link (/room/): the entry form is the room's own; put name + e-mail into the link
-                    self._room_var.set(room_link_with(site, nm, mail))
+                    self._room_var.set(room_link_with(site, nm, mail, v_phone.get().strip()))
                     self._log("Name and e-mail were added to the room link (they are not logged)", "info")
                     d.destroy()
+                    self._show("room")                        # where “Start recording” is
                     self._set_status("ok", "enter_room_in_link")
                     return
                 except RoomError:
@@ -3729,9 +3841,11 @@ class App(tk.Tk):
             host = host_of(site)
             self._log(f"Entering the room of {host} (name and e-mail are not logged)", "info")
 
+            phone = v_phone.get().strip()                 # read here: Tk values belong to the window's thread
+
             def work():
                 try:
-                    path = school_enter_room(site, nm, mail, phone=v_phone.get().strip())
+                    path = school_enter_room(site, nm, mail, phone=phone)
                 except LoginError as e:
                     post(lambda e=e: failed(e))
                 except Exception as e:
@@ -3778,7 +3892,7 @@ class App(tk.Tk):
             messagebox.showinfo(self.t("logout_btn"), self.t("logout_none"), parent=self); return
         hosts = "\n".join(os.path.splitext(os.path.basename(f))[0] for f in files)
         if not messagebox.askyesno(self.t("logout_btn"), self.t("logout_q", hosts=hosts),
-                                   parent=self):
+                                   icon="warning", default="no", parent=self):
             return
         for f in files:
             try: os.remove(f)
@@ -4168,7 +4282,7 @@ class App(tk.Tk):
         if free is not None and free < 6 * 1024 ** 3:       # 480p: about 1 GB per hour (recording + MP4)
             if not messagebox.askyesno(self.t("nav_room"), self.t("room_low_disk", gb=(f"{free / 1024 ** 3:.1f}").replace(".", "," if self._lang == "ru" else "."),
                                                                        h=max(0, int(free / 1024 ** 3 // 2))),
-                                       parent=self):
+                                       icon="warning", default="no", parent=self):
                 return
         self._running = True; self._room_active = True
         self._room_stop = threading.Event()
@@ -4221,6 +4335,8 @@ class App(tk.Tk):
         """How the recording ended -> (status kind, wording key, values)."""
         t = fmt_hms(real or res["seconds"])
         lost = res["failed"] + (res.get("skipped") or 0)      # pieces that failed + pieces the playlist dropped before we got them
+        if getattr(self, "_late_start", False) and (lost or not length_ok or res["reason"] == "stalled"):
+            return "warn", "st_room_done_late_gaps", {"t": t}  # the missing beginning is never left out of the message
         if lost:
             return "warn", "st_room_done_skipped", {"n": lost}
         if not length_ok:
@@ -4229,23 +4345,48 @@ class App(tk.Tk):
             return "warn", "st_room_done_stalled", {"t": t, "m": getattr(self, "_room_idle_min", 3)}
         return "ok", "st_room_done_kept", {"t": t}      # becomes st_room_done once the .ts is removed
 
-    def _room_clean_ts(self, ts, mp4, say):
-        """After a clean recording: if the MP4 is as long as the .ts, remove the .ts
-        (two files with one name confuse the main user). Anything doubtful keeps it."""
+    def _has_audio(self, path):
+        """True only if ffmpeg finds a sound track in the file (unknown counts as no sound)."""
+        try:
+            r = subprocess.run([self._ffmpeg, "-hide_banner", "-probesize", "50M", "-analyzeduration", "50M", "-i", path],
+                               capture_output=True, text=True, errors="replace", timeout=300, creationflags=NO_WINDOW)
+            return bool(re.search(r"Stream #\d+:\d+.*?: Audio:", r.stderr))
+        except Exception:
+            return False
+
+    def _room_clean_ts(self, ts, mp4, say, sound=""):
+        """After a clean recording: if the MP4 has sound and is as long as the .ts, remove the .ts (and the separate sound
+        file) - two files with one name confuse the main user. Anything doubtful keeps them. A video without sound is
+        never reported as done."""
         note = self._done_note
-        if not note or note[0] != "ok":
+        if not note:
+            return
+        if not self._has_audio(mp4):
+            self._done_note = ("warn", "st_room_done_noaudio", {})
+            say("   WARNING: the MP4 has no sound track; the recorded files were kept", "warn")
+            return
+        if note[0] != "ok":
             return
         a, b = self._media_seconds(ts, scan=True), self._media_seconds(mp4)
         if a and b and abs(a - b) <= max(2.0, a * 0.01) and os.path.getsize(mp4) > 0:
             try:
                 os.remove(ts)
             except OSError as e:
-                say(f"   Could not remove the .ts file: {clean(e)[:100]}", "warn"); return
-            say("   MP4 checked (same length as the recording); the .ts file was removed", "ok")
+                say(f"   Could not remove the .ts file: {clean(e)[:100]}", "warn")
+                if self._late_start:
+                    self._done_note = ("warn", "st_room_done_late", note[2])
+                return
+            say("   MP4 checked (sound and the same length as the recording); the .ts file was removed", "ok")
+            if sound:
+                try:
+                    os.remove(sound)
+                except OSError as e:
+                    say(f"   Could not remove the separate sound file: {clean(e)[:100]}", "warn")
             self._done_note = (("warn", "st_room_done_late_nofull" if self._wait_nofull else "st_room_done_late", note[2])
                                if self._late_start else ("ok", "st_room_done", note[2]))
         else:
             say(f"   MP4 length {fmt_hms(b)} vs recording {fmt_hms(a)}: the .ts file was kept", "warn")
+            self._done_note = ("warn", "st_room_done_late_gaps" if self._late_start else "st_room_done_check", note[2])
 
     @staticmethod
     def _keep_awake(on):
@@ -4301,6 +4442,7 @@ class App(tk.Tk):
         self._wait_nofull = False
         first = {}                                          # what VK said about the video when the recording started
         gc_live = None                                      # refresh function of a school's live stream (video service)
+        sound_url = sound = ""                              # a recorded video whose sound is a separate playlist / its file
         try:
             fetch = None
             if is_gc_webinar_link(link):                       # a school's own webinar page (GetCourse)
@@ -4375,6 +4517,9 @@ class App(tk.Tk):
                         ptext = mtext if murl == url else fetch(murl).decode("utf-8", "replace")
                         if "#EXT-X-ENDLIST" in ptext:
                             self._room_vod_total = sum(sg[2] for sg in hls_parse(ptext, murl)["segments"])
+                            side = hls_variant_audio(mtext, url, murl) if murl != url else ""
+                            if side:                             # picture and sound are two playlists: both are saved
+                                url, sound_url = murl, side
                     except Exception:
                         self._room_vod_total = 0
                     if self._room_vod_total:
@@ -4390,6 +4535,20 @@ class App(tk.Tk):
             stem = safe_name(title) or "webinar"
             out = unique_path(self._dl_dir, stem, ".ts")
             say("   Recording to: " + os.path.basename(out))
+            if sound_url:                                       # the small sound track first: whatever happens to the
+                sound = unique_path(self._dl_dir, os.path.splitext(os.path.basename(out))[0] + " (sound)", ".ts")  # picture later
+                say("   The sound is a separate track: it is saved first")
+                self.after(0, lambda: self._set_status("busy", "st_room_rec_sound"))
+                ares = RoomRecorder(sound_url, sound, stop, log=say, fetch=fetch).run()
+                if not (ares["reason"] == "endlist" and ares["segments"] and not ares["failed"]):
+                    try: os.remove(sound)
+                    except OSError: pass
+                    if ares["reason"] == "stopped":
+                        self.after(0, lambda: self._room_end("st_room_cancel"))
+                    else:
+                        key = "room_err_disk" if ares["reason"] == "disk" else "room_err_sound"
+                        self.after(0, lambda: self._room_fail(key))
+                    return
             self.after(0, lambda: self._room_progress(0))
             renew = {}
             self._room_idle_min = 3
@@ -4444,7 +4603,7 @@ class App(tk.Tk):
                         real2 = self._media_seconds(out2, scan=True) if res2["segments"] else 0
                         whole = bool(real2) and abs(real2 - res2["seconds"]) <= max(5.0, res2["seconds"] * 0.01)
                         if (res2["segments"] and not res2["failed"] and res2["reason"] == "endlist" and whole
-                                and res2["seconds"] >= res["seconds"] - 5):
+                                and res2["seconds"] >= res["seconds"] - 5 and self._has_audio(out2)):
                             removed = True
                             try: os.remove(out)                # the partial live recording is no longer needed
                             except OSError: removed = False
@@ -4473,8 +4632,11 @@ class App(tk.Tk):
                     say("   Could not get VK's full recording (" + clean(e)[:120] + "): the live recording is kept", "warn")
         except RoomError as e:
             try:
-                if out and os.path.isfile(out) and os.path.getsize(out) == 0:
+                empty = not (out and os.path.isfile(out) and os.path.getsize(out))
+                if empty and out and os.path.isfile(out):
                     os.remove(out)                         # nothing was recorded: no empty file is left behind
+                if empty and sound and os.path.isfile(sound):
+                    os.remove(sound)                       # sound without any picture is of no use
             except OSError:
                 pass
             if stop.is_set():                              # the user already said stop: no red error
@@ -4495,8 +4657,9 @@ class App(tk.Tk):
                 self.after(0, lambda: self._room_fail("room_err_disk"))
             return
         if res["segments"] == 0:
-            try: os.remove(out)
-            except OSError: pass
+            for p in (out, sound):
+                try: os.remove(p)
+                except OSError: pass
             if res["reason"] == "stopped":             # stopped before any video: not an error
                 self.after(0, lambda: self._room_end("st_room_cancel"))
             else:
@@ -4515,7 +4678,7 @@ class App(tk.Tk):
             say(f"   WARNING: file length {fmt_hms(real)} differs from the segments' "
                 f"{fmt_hms(expect)}", "warn")
         self._done_note = self._room_done_note(res, length_ok, real)
-        self._convert_worker(out, mp4, after_ok=lambda m: self._room_clean_ts(out, m, say))
+        self._convert_worker(out, mp4, after_ok=lambda m: self._room_clean_ts(out, m, say, sound), sound=sound)
 
     # ── CONVERT TO MP4 ─────────────────────────────────────────────────────
 
@@ -4541,9 +4704,13 @@ class App(tk.Tk):
         self._set_busy(True, "converting")
         self._prog.set(0); self._set_status("busy", "st_converting_nopct")
         self._log("─" * 70); self._log(f"Convert to MP4: {os.path.basename(src)}", "info")
-        threading.Thread(target=self._convert_worker, args=(src, out), daemon=True).start()
+        sound = sound_beside(src)                 # a webinar whose sound was saved as a second file
+        if sound:
+            self._log(f"   With its sound file: {os.path.basename(sound)}", "info")
+        threading.Thread(target=self._convert_worker, args=(src, out), kwargs={"sound": sound}, daemon=True).start()
 
-    def _convert_worker(self, src, out, after_ok=None):
+    def _convert_worker(self, src, out, after_ok=None, sound=""):
+        """src -> out (.mp4). `sound` = a second file that holds the sound track of the picture in src."""
         ff = self._ffmpeg
         total = 0.0
         try:                                       # length of the video, from ffmpeg's own banner
@@ -4559,9 +4726,10 @@ class App(tk.Tk):
         # 1st try: copy picture and sound untouched (fast, no loss);
         # 2nd try: copy the picture, re-encode only the sound (e.g. Opus -> AAC)
         for audio in (["-c:a", "copy"], ["-c:a", "aac", "-b:a", "160k"]):
+            two = ["-i", sound] if sound else []
             cmd = [ff, "-hide_banner", "-nostats", "-loglevel", "error", "-progress", "pipe:1",
-                   "-i", src, "-map", "0:v:0?", "-map", "0:a:0?", "-c:v", "copy", *audio,
-                   "-movflags", "+faststart", "-f", "mp4", "-y", tmp]
+                   "-i", src, *two, "-map", "0:v:0?", "-map", "1:a:0" if sound else "0:a:0?", "-c:v", "copy", *audio,
+                   *(["-shortest"] if sound else []), "-movflags", "+faststart", "-f", "mp4", "-y", tmp]
             try:
                 import tempfile
                 ef = tempfile.TemporaryFile()                  # a full stderr pipe would stop ffmpeg and hang the loop below
@@ -4789,7 +4957,7 @@ class App(tk.Tk):
         self._set_busy(False)
         self._prog.set(100)
         if n and ok < n:                    # some players of the page failed
-            self._set_status("warn", "st_done_n_audio" if audio else "st_done_n",
+            self._set_status("warn", "st_done_n_audio" if audio else "st_done_part",
                              action="folder", ok=ok, n=n)
         else:
             self._set_status("ok", "st_done_audio" if audio else "st_done",
@@ -5133,12 +5301,18 @@ class App(tk.Tk):
             self._set_busy(False)
             if ok:
                 self._prog.set(100)
-                self._set_status("ok", "st_done_n", action="folder", ok=ok, n=ok + fail)
+                kind, key, kw = self._batch_note(ok, fail)
+                self._set_status(kind, key, action="folder", **kw)
             else:
                 self._prog.set(0)
                 key, tag, action = reasons[0] if reasons else ("st_none_saved", "err", None)
                 self._set_status(tag, key, action=action)
         self.after(0, done)
+
+    @staticmethod
+    def _batch_note(ok, fail):
+        """The final message of a list download: green only if every video was saved."""
+        return ("warn" if fail else "ok"), ("st_done_part" if fail else "st_done_n"), {"ok": ok, "n": ok + fail}
 
     # ══════════════════════════════════════════════════════════
     #  MAINTENANCE

@@ -40,7 +40,7 @@ class Site(BaseHTTPRequestHandler):
 
 class Link(unittest.TestCase):
     def test_school_webinar_pages_are_recognised(self):
-        for ok in ("https://school.example/pl/webinar/show?id=3348296&view=1", "http://x.example/pl/webinar/view?id=1"):
+        for ok in ("https://school.example/pl/webinar/show?id=1000001&view=1", "http://x.example/pl/webinar/view?id=1"):
             self.assertTrue(vd.is_gc_webinar_link(ok), ok)
 
     def test_other_links_are_not(self):

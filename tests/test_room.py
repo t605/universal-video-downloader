@@ -9,8 +9,10 @@ import base64
 import hashlib
 import json
 import os
+import re
 import socket
 import struct
+import subprocess
 import sys
 import tempfile
 import threading
@@ -427,6 +429,24 @@ class RecorderTests(unittest.TestCase):
         both = dict(ok, failed=1, skipped=2)
         self.assertEqual(vd.App._room_done_note(me, both, True, 100.0)[2], {"n": 3})
 
+    def test_a_missing_beginning_is_still_said_when_pieces_are_lost_too(self):
+        import types
+        late = types.SimpleNamespace(_late_start=True)
+        ok = {"seconds": 100.0, "failed": 0, "skipped": 0, "reason": "ended"}
+        for res, length_ok in ((dict(ok, skipped=4), True), (dict(ok, reason="stalled"), True), (ok, False)):
+            self.assertEqual(vd.App._room_done_note(late, res, length_ok, 100.0)[:2], ("warn", "st_room_done_late_gaps"))
+        self.assertEqual(vd.App._room_done_note(late, ok, True, 100.0)[:2], ("ok", "st_room_done_kept"))
+
+    def test_every_finished_recording_message_starts_with_the_word_the_help_tells_her_to_wait_for(self):
+        for key in vd.T["en"]:
+            if key.startswith("st_room_done"):
+                self.assertTrue(vd.T["en"][key].startswith("Done"), key)
+                self.assertTrue(vd.T["ru"][key].startswith("Готово"), key)
+
+    def test_a_partly_failed_list_download_is_a_warning_not_a_success(self):
+        self.assertEqual(vd.App._batch_note(3, 0), ("ok", "st_done_n", {"ok": 3, "n": 3}))
+        self.assertEqual(vd.App._batch_note(1, 2), ("warn", "st_done_part", {"ok": 1, "n": 3}))
+
     def test_a_slow_renewal_does_not_freeze_the_loop(self):
         r = self.rec(FakeNet(start=1, step=1, total=1), refresh_timeout=0.3)
         r.refresh = lambda: (time.sleep(3), URL)[1]
@@ -475,19 +495,19 @@ class RecorderTests(unittest.TestCase):
         old = vd.kinescope_stream
         vd.kinescope_stream = lambda u, ref, ctx=None: (calls.append((u, ref)) or ("https://cdn.example/master.m3u8?sign=x", "T"))
         try:
-            for vt, ref in (("ks", "kinescope: 8mqLbm6wHztNLw9TGi6FJs"), ("kinescope", "https://kinescope.io/embed/8mqLbm6wHztNLw9TGi6FJs")):
+            for vt, ref in (("ks", "kinescope: AbCdEfGh1234567890JkLm"), ("kinescope", "https://kinescope.io/embed/AbCdEfGh1234567890JkLm")):
                 self.assertEqual(vd.stream_from_setting(vt, ref, referer="https://room.example/"), "https://cdn.example/master.m3u8?sign=x")
-            self.assertEqual(calls[0], ("https://kinescope.io/embed/8mqLbm6wHztNLw9TGi6FJs", "https://room.example/"))
+            self.assertEqual(calls[0], ("https://kinescope.io/embed/AbCdEfGh1234567890JkLm", "https://room.example/"))
             vd.kinescope_stream = lambda u, ref, ctx=None: None
             with self.assertRaises(vd.RoomError):
-                vd.stream_from_setting("ks", "kinescope: 8mqLbm6wHztNLw9TGi6FJs")
+                vd.stream_from_setting("ks", "kinescope: AbCdEfGh1234567890JkLm")
         finally:
             vd.kinescope_stream = old
 
     def test_name_and_email_are_put_into_a_room_link(self):
-        out = vd.room_link_with("https://start.example/room/201215/veb?utm_source=x", "Anna Petrova", "anna@example.org")
+        out = vd.room_link_with("https://start.example/room/100001/demo?utm_source=x", "Anna Petrova", "anna@example.org")
         room, q = vd.room_split_link(out)
-        self.assertEqual((room, q["username"], q["email"], q["utm_source"]), ("https://start.example/room/201215/veb/", "Anna Petrova", "anna@example.org", "x"))
+        self.assertEqual((room, q["username"], q["email"], q["utm_source"]), ("https://start.example/room/100001/demo/", "Anna Petrova", "anna@example.org", "x"))
         with self.assertRaises(vd.RoomError):
             vd.room_link_with("https://school.example/pl/webinar/show?id=5", "A", "a@b.c")
 
@@ -890,6 +910,249 @@ class WordingTests(unittest.TestCase):
         for key in set(re.findall(r'RoomError\("(\w+)"', src)):
             self.assertIn(key, vd.T["en"], key)
             self.assertIn(key, vd.T["ru"], key)
+
+
+# ---------------------------------------------------------------- sound (a recording without sound is never "done")
+SEPARATE = ('#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="a",DEFAULT=YES,URI="a/audio.m3u8"\n'
+            '#EXT-X-STREAM-INF:BANDWIDTH=900000,RESOLUTION=854x480,AUDIO="aud"\nv/video.m3u8\n')
+
+
+class _RangeFiles(http.server.SimpleHTTPRequestHandler):
+    """Files of one folder; a Range request gets exactly those bytes (as a video server does for EXT-X-BYTERANGE)."""
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        path = self.translate_path(self.path)
+        if not os.path.isfile(path):
+            self.send_error(404)
+            return
+        with open(path, "rb") as f:
+            body = f.read()
+        rg = self.headers.get("Range")
+        if rg:
+            a, b = [int(x) for x in rg.split("=")[1].split("-")]
+            body = body[a:b + 1]
+        self.send_response(206 if rg else 200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+class _Prog:
+    def set(self, v):
+        pass
+
+
+class _RoomApp:
+    """The room worker of the real App, without a window: the real methods, the screen replaced by lists."""
+    for _n in ("_room_worker_body", "_room_end", "_room_fail", "_room_progress", "_room_converting", "_room_done_note",
+               "_room_clean_ts", "_media_seconds", "_has_audio", "_convert_worker", "_conv_done", "_conv_fail",
+               "_conv_progress"):
+        if _n in vd.App.__dict__:
+            locals()[_n] = vd.App.__dict__[_n]
+
+    def __init__(self, folder):
+        self._dl_dir, self._ffmpeg = folder, vd._find_ffmpeg()
+        self._running, self._room_active, self._room_shown = True, True, 0.0
+        self._room_stop, self._done_note, self._last_conv = threading.Event(), None, ""
+        self._prog = _Prog()
+        self.statuses, self.lines = [], []
+
+    def after(self, ms, fn):
+        fn()
+
+    def _log(self, msg, tag="plain"):
+        self.lines.append(msg)
+
+    def _set_status(self, kind, key, action=None, sub="", **kw):
+        self.statuses.append((kind, key))
+
+    def _set_busy(self, *a, **k):
+        pass
+
+    def _room_buttons(self, *a, **k):
+        pass
+
+    def _cookie_file_for(self, url):
+        return ""
+
+    def _ssl_ctx(self):
+        return None
+
+
+@unittest.skipUnless(vd._find_ffmpeg(), "ffmpeg is not available")
+class SoundTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.web = tempfile.mkdtemp()
+        ff = vd._find_ffmpeg()
+        hls = ["-f", "hls", "-hls_time", "4", "-hls_playlist_type", "vod"]
+        picture = ["-f", "lavfi", "-i", "testsrc=size=160x120:rate=25"]
+        tone = ["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000"]
+        h264 = ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-g", "50"]
+        ranges = ["-hls_segment_type", "fmp4", "-hls_flags", "single_file"]      # byte ranges of one file, as Kinescope
+        for sub, args, name in (("v", picture + ["-t", "12"] + h264 + hls + ranges, "video.m3u8"),
+                                ("a", tone + ["-t", "12", "-c:a", "aac"] + hls + ranges, "audio.m3u8"),
+                                ("m", picture + tone + ["-t", "12"] + h264 + ["-c:a", "aac"] + hls, "muxed.m3u8")):
+            os.makedirs(os.path.join(cls.web, sub))
+            subprocess.run([ff, "-hide_banner", "-loglevel", "error", "-y"] + args + [name],
+                           cwd=os.path.join(cls.web, sub), check=True)
+        cls._write("separate.m3u8", SEPARATE)
+        cls._write("silent.m3u8", "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=900000,RESOLUTION=854x480\nv/video.m3u8\n")
+        with open(os.path.join(cls.web, "v", "video.m3u8"), encoding="utf-8") as f:
+            cls._write("v/live.m3u8", f.read().replace("#EXT-X-ENDLIST", ""))
+        cls._write("live_separate.m3u8", SEPARATE.replace("v/video.m3u8", "v/live.m3u8"))
+        with open(os.path.join(cls.web, "a", "audio.m3u8"), encoding="utf-8") as f:
+            sound = f.read().splitlines()
+        first = [i for i, l in enumerate(sound) if l.startswith("#EXTINF")][1]       # only the first piece of the sound
+        cls._write("a/short.m3u8", "\n".join(sound[:first]) + "\n#EXT-X-ENDLIST\n")
+        cls._write("a/locked.m3u8", "\n".join(sound).replace("#EXTM3U", '#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="k"') + "\n")
+        cls._write("short_sound.m3u8", SEPARATE.replace("a/audio.m3u8", "a/short.m3u8"))
+        cls._write("locked_sound.m3u8", SEPARATE.replace("a/audio.m3u8", "a/locked.m3u8"))
+        web = cls.web
+        cls.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), lambda *a, **k: _RangeFiles(*a, directory=web, **k))
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+        cls.base = "http://127.0.0.1:%d/" % cls.srv.server_address[1]
+
+    @classmethod
+    def _write(cls, name, text):
+        with open(os.path.join(cls.web, name), "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown(); cls.srv.server_close()
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.saved = {n: getattr(vd, n) for n in ("room_signin", "room_wait_for_stream", "stream_from_setting", "vk_wait_for_full")}
+
+    def tearDown(self):
+        for n, f in self.saved.items():
+            setattr(vd, n, f)
+
+    def record(self, vt, playlist_name, on_air=False):
+        def wait(init, origin, stop, info=None, **kw):
+            if info is not None:
+                info["on_air_at_join"] = on_air
+            return vt, "kinescope: abcdefghij123", "Lesson"
+        vd.room_signin = lambda link: ("https://start.example/room/1/x/", {})
+        vd.room_wait_for_stream = wait
+        vd.stream_from_setting = lambda *a, **k: self.base + playlist_name
+        app = _RoomApp(self.dir)
+        app._room_worker_body("https://start.example/room/1/x", app._room_stop)
+        return app
+
+    def files(self, ext):
+        return sorted(f for f in os.listdir(self.dir) if f.lower().endswith(ext))
+
+    def streams(self, name):
+        r = subprocess.run([vd._find_ffmpeg(), "-hide_banner", "-i", os.path.join(self.dir, name)],
+                           capture_output=True, text=True, errors="replace")
+        m = re.search(r"Duration: (\d+):(\d+):([\d.]+)", r.stderr)
+        secs = int(m[1]) * 3600 + int(m[2]) * 60 + float(m[3]) if m else 0
+        return "Video:" in r.stderr, "Audio:" in r.stderr, secs
+
+    def test_a_kinescope_room_with_a_separate_sound_track_gives_one_mp4_with_picture_and_sound(self):
+        app = self.record("ks", "separate.m3u8")
+        self.assertEqual(self.files(".mp4"), ["Lesson.mp4"], app.lines)
+        video, audio, secs = self.streams("Lesson.mp4")
+        self.assertEqual((video, audio), (True, True), app.lines)
+        self.assertAlmostEqual(secs, 12.0, delta=0.6)
+        self.assertEqual(self.files(".ts"), [], app.lines)               # nothing confusing is left beside the MP4
+        self.assertEqual(app.statuses[-1], ("ok", "st_room_done"))
+
+    def test_a_video_without_sound_is_never_done_and_the_ts_is_kept(self):
+        app = self.record("ks", "silent.m3u8")
+        self.assertEqual(app.statuses[-1], ("warn", "st_room_done_noaudio"), app.lines)
+        self.assertEqual(self.files(".ts"), ["Lesson.ts"])
+
+    def test_a_running_broadcast_with_a_separate_sound_track_is_refused_with_a_clear_message(self):
+        app = self.record("ks", "live_separate.m3u8")
+        self.assertEqual(app.statuses[-1], ("err", "room_err_audio"), app.lines)
+        self.assertEqual(self.files(".mp4"), [])
+
+    def test_a_sound_track_much_shorter_than_the_picture_is_a_warning_and_keeps_the_files(self):
+        app = self.record("ks", "short_sound.m3u8")
+        self.assertEqual(app.statuses[-1], ("warn", "st_room_done_check"), app.lines)
+        self.assertEqual(self.files(".ts"), ["Lesson (sound).ts", "Lesson.ts"])
+
+    def test_an_encrypted_sound_track_leaves_no_files_behind(self):
+        app = self.record("ks", "locked_sound.m3u8")
+        self.assertEqual(app.statuses[-1], ("err", "room_err_enc"), app.lines)
+        self.assertEqual(self.files(".ts"), [])
+
+    def test_the_missing_beginning_is_said_even_if_the_ts_cannot_be_removed(self):
+        ts, mp4 = os.path.join(self.dir, "r.ts"), os.path.join(self.dir, "r.mp4")
+        ff = vd._find_ffmpeg()
+        for out in (ts, mp4):
+            subprocess.run([ff, "-hide_banner", "-loglevel", "error", "-y", "-i", os.path.join(self.web, "m", "muxed.m3u8"),
+                            "-c", "copy", out], check=True)
+        app = _RoomApp(self.dir)
+        app._late_start, app._wait_nofull = True, False
+        app._done_note = ("ok", "st_room_done_kept", {"t": "0:00:12"})
+        old = vd.os.remove
+
+        def locked(p):
+            raise OSError("in use")
+        vd.os.remove = locked
+        try:
+            app._room_clean_ts(ts, mp4, lambda *a: None)
+        finally:
+            vd.os.remove = old
+        self.assertEqual(app._done_note[:2], ("warn", "st_room_done_late"))
+
+    def test_a_silent_full_recording_from_vk_never_replaces_the_live_recording_with_sound(self):
+        vd.vk_wait_for_full = lambda *a, **k: (self.base + "v/video.m3u8", "full")
+        app = self.record("vk", "m/muxed.m3u8", on_air=True)
+        self.assertEqual(self.files(".mp4"), ["Lesson.mp4"], app.lines)
+        self.assertTrue(self.streams("Lesson.mp4")[1], app.lines)        # the sound of the live recording survived
+        self.assertEqual(app.statuses[-1][0], "warn")
+
+
+class SeparateSoundPlaylistTests(unittest.TestCase):
+    def test_the_sound_track_of_a_variant_is_found(self):
+        base = "https://cdn.example/d/master.m3u8"
+        self.assertEqual(vd.hls_variant_audio(SEPARATE, base, "https://cdn.example/d/v/video.m3u8"),
+                         "https://cdn.example/d/a/audio.m3u8")
+        muxed = ('#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="a"\n'
+                 '#EXT-X-STREAM-INF:BANDWIDTH=1,RESOLUTION=854x480,AUDIO="aud"\nv.m3u8\n')     # no URI: sound is inside
+        self.assertEqual(vd.hls_variant_audio(muxed, base, "https://cdn.example/d/v.m3u8"), "")
+
+    def test_a_sound_only_stream_is_never_taken_instead_of_the_picture(self):
+        master = SEPARATE + '#EXT-X-STREAM-INF:BANDWIDTH=64000,CODECS="mp4a.40.2"\nonly_sound.m3u8\n'
+        self.assertEqual(vd.hls_best_variant(master, "https://cdn.example/d/master.m3u8", muxed_only=True), "")
+
+    def test_a_group_whose_main_sound_is_inside_the_picture_is_not_separate(self):
+        base = "https://cdn.example/d/master.m3u8"
+        master = ('#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="main",DEFAULT=YES\n'
+                  '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="other language",URI="other.m3u8"\n'
+                  '#EXT-X-STREAM-INF:BANDWIDTH=1,RESOLUTION=854x480,AUDIO="aud"\nv.m3u8\n')
+        self.assertEqual(vd.hls_variant_audio(master, base, "https://cdn.example/d/v.m3u8"), "")
+
+    def test_the_sound_file_belongs_to_its_picture_file_by_name(self):
+        d = tempfile.mkdtemp()
+        for name in ("Lesson (1).ts", "Lesson (1) (sound).ts", "Other.ts"):
+            open(os.path.join(d, name), "w").close()
+        self.assertEqual(vd.sound_beside(os.path.join(d, "Lesson (1).ts")), os.path.join(d, "Lesson (1) (sound).ts"))
+        self.assertEqual(vd.sound_beside(os.path.join(d, "Other.ts")), "")
+        self.assertEqual(vd.sound_beside(os.path.join(d, "Lesson (1).mp4")), "")      # only the raw recording has a partner
+
+    def test_the_recorder_prefers_a_stream_with_the_sound_inside(self):
+        master = SEPARATE + "#EXT-X-STREAM-INF:BANDWIDTH=500000,RESOLUTION=640x360\nm/muxed.m3u8\n"
+        asked = []
+
+        def fetch(u):
+            asked.append(u.rsplit("/", 1)[-1])
+            if u.endswith("master.m3u8"):
+                return master.encode()
+            return playlist(0, 2, endlist=True).encode() if u.endswith(".m3u8") else b"x"
+        out = os.path.join(tempfile.mkdtemp(), "r.ts")
+        res = vd.RoomRecorder("https://cdn.example/d/master.m3u8", out, threading.Event(), fetch=fetch, poll=0.01).run()
+        self.assertEqual(res["reason"], "endlist")
+        self.assertIn("muxed.m3u8", asked)
+        self.assertNotIn("video.m3u8", asked)
 
 
 if __name__ == "__main__":

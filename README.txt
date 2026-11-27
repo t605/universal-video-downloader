@@ -298,7 +298,7 @@ website that needs your login)
      password"). After a good login the program goes back to
      the main page and says: "Logged in to ... For one video,
      press the blue "Download video" button. For a whole
-     course, open "Several videos on one page"." The login
+     course, open "Several videos"." The login
      stays saved: next time skip this step.
 
   STEP 2 - COPY THE ADDRESS OF THE COURSE PAGE.
@@ -325,8 +325,8 @@ website that needs your login)
      than a minute. Do not press anything.
      YOU WILL SEE AT THE END: a list, one line per video, every
      line with a tick, and the message "Found 13 videos. Untick
-     any you don't want, then press the blue button. They will
-     be saved in: ..." with the name of the folder (the number
+     any you don't want, then press "Download ticked videos".
+     They will be saved in: ..." with the folder name (the number
      is the number of videos in your course).
      IF YOU SEE "No videos found": you are not logged in, or
      this is not the page that lists the lessons. Go back to
@@ -455,7 +455,8 @@ STEP 3 - Open the login page
   YOU WILL SEE: a new page with the title "Log in to websites"
   and a blue button "Log in with a password".
   (You can also reach the login window from the button "Log in"
-  under the message "No video was found on this page.")
+  to the right of the message "No video was found on this
+  page.")
 
 STEP 4 - Open the password window
   WHAT: Click the blue button "Log in with a password".
@@ -503,7 +504,7 @@ STEP 9 - Success
   YOU WILL SEE: the program goes back to the main page and
   shows a message like "Logged in to <website>. For one video,
   press the blue "Download video" button. For a whole course,
-  open "Several videos on one page"."
+  open "Several videos"."
   WHAT: For one video, press the big blue "Download video"
   button (section 3). For a whole course, click "Several
   videos" in the menu on the left and follow section
@@ -537,13 +538,15 @@ Plain facts about your password:
 
 WHAT THE MESSAGES MEAN, AND WHAT TO DO
 --------------------------------------
-You see: "No video was found on this page. If it is a private
-lesson, log in first (press the button "Log in" below);
-otherwise this website may not be supported."
-  -> Do this: it may be a private lesson. Press "Log in", or
-     follow Option A or B. If you are already logged in and it
-     still fails, this website may not be supported. Ask your
-     helper.
+You see: "No video was found on this page. If the page asks
+only for a name and e-mail: ... If it is a private lesson with
+a password, press "Log in" on the right. ..."
+  -> Do this: if the page asks only for a name and e-mail, open
+     "Log in to websites" and press "No password, only a name
+     and e-mail?". If it is a private lesson, press "Log in",
+     or follow Option A or B. If you are already logged in and
+     it still fails, this website may not be supported. Ask
+     your helper.
 
 You see: "This video is private - the website needs to know you
 are logged in. Set up "Log in to websites"."
@@ -759,13 +762,15 @@ broadcast while it runs and turn it into an MP4 file for you.
      computer sleeps anyway, the recording stops or has a gap.
   5. When the webinar is over, the program stops by itself and
      makes the MP4. To finish earlier, press "Stop and save".
-     Wait for "Done!". The MP4 is in your download folder.
+     Wait for a message that begins "Done". The MP4 is in your
+     download folder.
 
   * Normally only the ".mp4" is left: the program checks that
-    it is as long as the raw recording and then removes the raw
-    ".ts" file. If anything looks wrong (pieces missing, a
-    different length), it keeps the ".ts" too and the final
-    message says so; play the .mp4 before you delete the .ts.
+    it has sound and is as long as the raw recording and then
+    removes the raw ".ts" file. If anything looks wrong (no
+    sound, pieces missing, a different length), it keeps the
+    ".ts" too and the final message says so; play the .mp4
+    before you delete the .ts.
   * Start BEFORE the webinar begins. In a Rutube room the
     program records from the very beginning even if you start
     late; for VK it cannot (see below), and a school's live
@@ -821,12 +826,20 @@ broadcast while it runs and turn it into an MP4 file for you.
     broadcast; Kinescope since 9.29, tried for a few minutes
     on a real room that played a recording of 2 h 43 min).
     A room that plays a recording can be saved whole, from
-    its start, even if you press the button late.
+    its start, even if you press the button late. Such a
+    Kinescope recording sends its sound as a separate track:
+    the program saves the sound first, then the picture, and
+    puts them together (the extra file ends with "(sound).ts"
+    and is removed when the MP4 is checked). Version 9.29 was
+    checked with picture and sound on the first two minutes of
+    a real room. A RUNNING broadcast that sends its sound
+    separately cannot be recorded: the program says so.
     If your link has no name and e-mail in it (the room asks
     for them in its own form), press the button "The school
-    asks for a name and e-mail?" on this page, type both and
-    press "Enter": they are put into the link and you press
-    "Start recording" as usual.
+    asks for a name and e-mail?" on this page, type both (and
+    a phone number only if the form asks for it), tick the box
+    and press "Enter": they are put into the link and you
+    press "Start recording" as usual.
     You cannot tell from the link which kind a room is. The
     program learns it only when the broadcast starts, so be
     at the computer at that time. A VK room that is already
@@ -882,7 +895,7 @@ it in 480p. (Tried on one real live webinar of such a
 school: a short test recording played without errors. NOT
 tried yet: a whole webinar of such a school.) If the
 broadcast is already on air when you press the button, the
-final message begins "Saved, but not complete: the beginning
+final message begins "Done, but not complete: the beginning
 is missing"; for these
 schools there is no later full recording in the program: if
 the school puts the recording into a lesson, paste that
@@ -895,9 +908,10 @@ The program does not know you then, and says that the page
 holds no broadcast address. Two ways:
   A. On the page "Record a webinar room" click "The school
      asks for a name and e-mail? Enter the room here...".
-     Fill in the address, your name and the e-mail you
-     registered with, tick the box and press "Enter the
-     room". The program sends the form to that school, as
+     Fill in the address, your name, the e-mail you
+     registered with (a phone number only if the form asks for
+     it), tick the box and press "Enter". The program sends
+     the form to that school, as
      your browser does. Then press "Start recording". Your
      name and e-mail are not saved by the program.
      (This way was tested only with a made-up school.) The
@@ -905,8 +919,10 @@ holds no broadcast address. Two ways:
      webinar (the page says "To watch the video, log in"
      and shows only name and e-mail fields): button "No
      password, only a name and e-mail? Enter here..." on
-     the page "Log in to websites", then paste the link as
-     usual. It
+     the page "Log in to websites". The window takes the
+     address from the main screen (check it). After "Enter",
+     open "Download video" in the menu and press the blue
+     button. It
      never replaces a saved password login: it saves its
      own file.
   B. Use a login file (section 5, Option B), exported from
@@ -1069,10 +1085,11 @@ YouTube and set up "Log in to websites"."
 
 SEVERAL VIDEOS
 --------------
-You see: "Done! 2 of 3 videos saved."
-  -> One of them failed. The others are saved. Press the blue
-     button again to retry. Videos that are already saved are
-     not downloaded twice.
+You see: "Not all videos were saved: 2 of 3. ..."
+  -> One of them failed. The others are saved. Press "Download
+     ticked videos" again. In a course (a list whose files are
+     numbered 01, 02, ...) saved videos are skipped; in other
+     lists they are saved a second time as "name (1)".
 
 You see: "None of the videos could be downloaded."
   -> Do this: read the other message in the box. If it is not
@@ -1096,7 +1113,8 @@ under "Details for helper"."
 
 The download stops partway
   -> Usually the internet connection. Press the blue button
-     again; it picks up from where it stopped.
+     again. A single video starts again from the beginning; in
+     a numbered course list the finished videos are skipped.
 
 Videos look blurrier than expected
   -> That is normal. This tool saves 480p on purpose, so files
@@ -1120,21 +1138,37 @@ that the whole webinar is in the video. Waited: ..., at most
 ... left. You may do other things..."
   -> Keep the window open and the computer on. "Stop and save"
      keeps what is already recorded.
-"Saved, but not complete: the beginning is missing..."
-  -> The MP4 is saved without the start. Later, ask your
-     helper to find the video's address in VK and paste it on
-     the main screen.
-"Done, but some short pieces could not be downloaded..." or
-"Done, but the length of the video does not match..." or
-"The broadcast sent no video for N minutes..."
+"Done, but not complete: the beginning is missing..."
+  -> The recording is saved without the start. Later, ask your
+     helper whether the school or VK published the whole video.
+"Done, but not complete: some short pieces could not be
+downloaded..." or "Done, but the length of the video does not
+match..." or "Done, but maybe not complete: the broadcast sent
+no video for N minutes..."
   -> The MP4 exists and the ".ts" was kept. Play the MP4
-     before you delete the ".ts".
+     before you delete the ".ts". If the school keeps the
+     recording, you can record it again.
+"Done, but WITHOUT SOUND..."
+  -> The recording is not good. Keep the files and show the
+     message to your helper.
+"This broadcast sends the sound separately..."
+  -> The program cannot record this running broadcast. If the
+     school publishes the recording later, record it then.
+"The sound of this webinar could not be downloaded
+completely..."
+  -> Check the internet and press "Start recording" again.
 "This link does not look like a webinar..."
   -> Copy the address of the page where the webinar is shown.
 "The webinar page could not be opened. Log in to the school
-first..." / "This webinar page holds no broadcast address..."
+first..." / "No broadcast address: the school has probably
+not let the program in..."
   -> Log in to the school (section 5). If the school has no
      password, see THE SCHOOL ASKS FOR A NAME AND E-MAIL.
+"No connection to the school's webinar channel, so NOTHING is
+being recorded..."
+  -> Check the internet and press "Start recording" again. If
+     the webinar time has not passed yet, keep trying and call
+     your helper.
 "The room did not let the program in." / "The room did not
 answer." / "Could not connect to the room's broadcast."
   -> Check the internet, wait a minute, press "Start

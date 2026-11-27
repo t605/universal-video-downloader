@@ -182,6 +182,26 @@ class FreeNames(unittest.TestCase):
         vd.run_into_free_names({"format": "best"}, lambda o: seen.append(o) or "x")
         self.assertEqual(seen, [{"format": "best"}])
 
+    def test_finished_files_in_an_old_leftover_folder_are_rescued_never_deleted(self):
+        import time
+        old = os.path.join(self.dir, ".vdl_deadbeef")             # a download that was closed or crashed, two days ago
+        os.makedirs(old)
+        for name in ("Finished lesson.mp4", "view.mp4", "half.mp4.part", "merge.temp.mp4", "piece.mp4.part-Frag3", "x.f137.mp4"):
+            with open(os.path.join(old, name), "w") as f:
+                f.write("data of " + name)
+        t = time.time() - 2 * 86400
+        os.utime(old, (t, t))
+        with open(os.path.join(self.dir, "view.mp4"), "w") as f:
+            f.write("old")
+        vd.run_into_free_names(self.opts("new"), self.writer(("new.mp4", "n")))
+        self.assertEqual(self.names(), ["Finished lesson.mp4", "new.mp4", "view (1).mp4", "view.mp4"])
+        with open(os.path.join(self.dir, "view.mp4")) as f:
+            self.assertEqual(f.read(), "old")                     # nothing is overwritten by a rescue
+
+    def test_a_half_made_mp3_beside_its_source_is_not_delivered(self):
+        vd.run_into_free_names(self.opts("song"), self.writer(("song.webm", "source"), ("song.mp3", "half"), ("done.mp3", "whole")))
+        self.assertEqual(self.names(), ["done.mp3", "song.webm"])
+
     def test_the_template_the_downloader_sees_is_inside_a_sub_folder(self):
         got = []
         vd.run_into_free_names(self.opts("lesson"), lambda o: got.append(o["outtmpl"]))
