@@ -948,7 +948,7 @@ class _RoomApp:
     """The room worker of the real App, without a window: the real methods, the screen replaced by lists."""
     for _n in ("_room_worker_body", "_room_end", "_room_fail", "_room_progress", "_room_converting", "_room_done_note",
                "_room_clean_ts", "_media_seconds", "_has_audio", "_convert_worker", "_conv_done", "_conv_fail",
-               "_conv_progress"):
+               "_conv_progress", "_room_net_wait", "_stop_room", "_stop_question"):
         if _n in vd.App.__dict__:
             locals()[_n] = vd.App.__dict__[_n]
 
@@ -1153,6 +1153,269 @@ class SeparateSoundPlaylistTests(unittest.TestCase):
         self.assertEqual(res["reason"], "endlist")
         self.assertIn("muxed.m3u8", asked)
         self.assertNotIn("video.m3u8", asked)
+
+
+# ---------------------------------------------------------------- a broken connection must not leave holes in a ready recording
+class _Net:
+    """A finished playlist of `total` pieces; `broken(name, n)` returns the error to raise on the n-th request, or None."""
+
+    def __init__(self, total, broken, endlist=True, init=False):
+        self.total, self.broken, self.endlist, self.init = total, broken, endlist, init
+        self.asked = {}
+
+    def __call__(self, url):
+        if url.endswith("live.m3u8"):
+            text = playlist(0, self.total, endlist=self.endlist)
+            if self.init:
+                text = text.replace("#EXTM3U", '#EXTM3U\n#EXT-X-MAP:URI="init.mp4"')
+            return text.encode()
+        name = url.rsplit("/", 1)[1]
+        self.asked[name] = self.asked.get(name, 0) + 1
+        err = self.broken(name, self.asked[name])
+        if err:
+            raise err
+        return name.encode() + b"|"
+
+
+class NetworkBreakTests(unittest.TestCase):
+    def setUp(self):
+        self.out = os.path.join(tempfile.mkdtemp(), "r.ts")
+
+    def rec(self, net, stop=None, **kw):
+        kw.setdefault("poll", 0.01); kw.setdefault("idle_end", 0.3); kw.setdefault("retries", 2)
+        kw.setdefault("sleep", lambda s: time.sleep(0.005)); kw.setdefault("outage_wait", 5.0)
+        return vd.RoomRecorder(URL, self.out, stop or threading.Event(), fetch=net, **kw)
+
+    def data(self):
+        with open(self.out, "rb") as f:
+            return f.read()
+
+    def whole(self, n):
+        return b"".join(b"s%d.ts|" % i for i in range(n))
+
+    def test_a_ready_recording_waits_for_the_connection_and_has_no_holes(self):
+        down = lambda name, n: ConnectionError("network down") if name != "s0.ts" and n <= 12 else None
+        waits = []
+        res = self.rec(_Net(6, down), waiting=waits.append).run()
+        self.assertEqual((res["reason"], res["segments"], res["failed"]), ("endlist", 6, 0))
+        self.assertEqual(self.data(), self.whole(6))
+        self.assertEqual(waits[:2], [True, False])                  # the screen is told, and told again when it is back
+
+    def test_a_piece_the_server_refuses_is_not_waited_for(self):
+        gone = lambda name, n: vd.HttpStatusError(404) if name == "s2.ts" else None
+        waits = []
+        t0 = time.time()
+        res = self.rec(_Net(6, gone), waiting=waits.append, outage_wait=30.0).run()
+        self.assertEqual((res["segments"], res["failed"]), (5, 1))
+        self.assertEqual(waits, [])
+        self.assertLess(time.time() - t0, 5.0)
+
+    def test_a_server_that_is_briefly_unavailable_is_waited_for(self):
+        busy = lambda name, n: vd.HttpStatusError(503) if name == "s2.ts" and n <= 6 else None
+        res = self.rec(_Net(4, busy)).run()
+        self.assertEqual((res["segments"], res["failed"]), (4, 0))
+
+    def test_a_connection_that_never_returns_is_given_up_once_not_for_every_piece(self):
+        down = lambda name, n: ConnectionError("down") if name != "s0.ts" else None
+        waits = []
+        t0 = time.time()
+        res = self.rec(_Net(12, down), waiting=waits.append, outage_wait=0.4).run()
+        self.assertEqual((res["reason"], res["segments"], res["failed"]), ("lost", 1, 1))
+        self.assertEqual(waits, [True, False])
+        self.assertLess(time.time() - t0, 4.0)
+
+    def test_a_piece_the_server_keeps_failing_is_given_up_soon_and_the_rest_is_saved(self):
+        broken = lambda name, n: vd.HttpStatusError(500) if name in ("s2.ts", "s5.ts", "s8.ts") else None
+        t0 = time.time()
+        res = self.rec(_Net(12, broken), outage_wait=60.0, server_wait=0.2, server_budget=0.5).run()
+        self.assertEqual((res["reason"], res["segments"], res["failed"]), ("endlist", 9, 3))
+        self.assertLess(time.time() - t0, 5.0)
+
+    def test_after_giving_up_no_further_piece_is_asked_for(self):
+        down = lambda name, n: ConnectionError("down") if name != "s0.ts" else None
+        net = _Net(200, down)                                     # many batches: 200 pieces, 2 workers
+        res = self.rec(net, outage_wait=0.3, workers=2).run()
+        self.assertEqual((res["reason"], res["segments"], res["failed"]), ("lost", 1, 1))
+        self.assertLessEqual(len(net.asked), 4)                   # only the batch in which it gave up
+        self.assertEqual(self.data(), self.whole(1))
+
+    def test_a_long_outage_does_not_use_up_the_patience_for_server_errors(self):
+        def broken(name, n):
+            if name == "s1.ts" and n <= 8:
+                return ConnectionError("down")
+            if name == "s1.ts" and n == 9:
+                return vd.HttpStatusError(503)                    # the first answer when the connection is back
+            return None
+        slow = lambda s: time.sleep(0.05)
+        res = self.rec(_Net(3, broken), sleep=slow, outage_wait=30.0, server_wait=1.0, server_budget=0.2).run()
+        self.assertEqual((res["segments"], res["failed"]), (3, 0))
+
+    def test_the_length_of_a_finished_playlist_is_reported(self):
+        self.assertEqual(self.rec(_Net(3, lambda *a: None)).run()["total"], 12.0)
+
+    def test_stop_while_waiting_saves_the_unbroken_part_only(self):
+        stop = threading.Event()
+        down = lambda name, n: ConnectionError("down") if name == "s2.ts" else None
+        res = self.rec(_Net(6, down), stop, outage_wait=30.0,
+                       waiting=lambda on: stop.set() if on else None).run()
+        self.assertEqual((res["reason"], res["segments"], res["failed"]), ("stopped", 2, 0))
+        self.assertEqual(self.data(), self.whole(2))                # nothing is written after the gap
+
+    def test_a_running_broadcast_does_not_wait_for_a_lost_piece(self):
+        down = lambda name, n: ConnectionError("down") if name == "s2.ts" else None
+        waits = []
+        res = self.rec(_Net(6, down, endlist=False), waiting=waits.append, outage_wait=30.0).run()
+        self.assertEqual((res["segments"], res["failed"], waits), (5, 1, []))
+
+    def test_a_first_piece_that_cannot_be_read_stops_the_recording_with_an_error(self):
+        gone = lambda name, n: vd.HttpStatusError(404) if name == "init.mp4" else None
+        with self.assertRaises(vd.RoomError) as cm:
+            self.rec(_Net(3, gone, init=True)).run()
+        self.assertEqual(cm.exception.key, "room_err_stream")
+
+    def test_a_first_piece_is_waited_for_like_any_other(self):
+        down = lambda name, n: ConnectionError("down") if name == "init.mp4" and n <= 5 else None
+        res = self.rec(_Net(2, down, init=True)).run()
+        self.assertEqual((res["segments"], res["failed"]), (2, 0))
+        self.assertTrue(self.data().startswith(b"init.mp4|"))
+
+    def test_a_byte_range_answered_with_too_few_bytes_is_not_accepted(self):
+        class Short(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                self.send_response(206); self.send_header("Content-Length", "3"); self.end_headers()
+                self.wfile.write(b"abc")
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Short)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            url = "http://127.0.0.1:%d/f#bytes=0-9" % srv.server_address[1]
+            with self.assertRaises(ConnectionError):
+                vd._http(url)
+            self.assertEqual(vd._http(url.replace("0-9", "0-2")), (200, b"abc"))
+        finally:
+            srv.shutdown(); srv.server_close()
+
+
+class HonestStopMessages(unittest.TestCase):
+    def note(self, res, **state):
+        import types
+        return vd.App._room_done_note(types.SimpleNamespace(**state), res, True, res["seconds"])
+
+    def test_a_ready_recording_that_was_cut_short_is_never_a_plain_success(self):
+        res = {"seconds": 20.0, "failed": 0, "skipped": 0, "reason": "stopped"}
+        self.assertEqual(self.note(res, _room_vod_total=60.0)[:2], ("warn", "st_room_done_cut"))
+        self.assertEqual(self.note(dict(res, reason="lost", failed=1), _room_vod_total=60.0)[:2], ("warn", "st_room_done_cut"))
+        whole = dict(res, seconds=60.0)
+        self.assertEqual(self.note(whole, _room_vod_total=60.0)[0], "ok")
+
+    def test_the_length_known_by_the_recorder_counts_too_and_a_late_start_stays_said(self):
+        res = {"seconds": 20.0, "failed": 0, "skipped": 0, "reason": "stopped", "total": 60.0}
+        self.assertEqual(self.note(res)[:2], ("warn", "st_room_done_cut"))
+        lost = dict(res, reason="lost", failed=1)
+        self.assertEqual(self.note(lost, _late_start=True)[:2], ("warn", "st_room_done_late_gaps"))
+
+    def test_new_final_messages_exist(self):
+        for key in ("st_room_done_cut", "st_room_done_stopped", "room_stop_ask_sound", "room_stop_ask_full"):
+            for lang in ("en", "ru"):
+                self.assertIn(key, vd.T[lang], key)
+
+
+class ClosingAndStopping(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+
+    def test_closing_during_a_conversion_does_not_start_a_second_pass(self):
+        app = _RoomApp(self.dir)
+        started = []
+
+        class Killed:
+            stdout = iter(())
+
+            def __init__(p, cmd, **k):
+                if "-progress" not in cmd:
+                    raise OSError("the length probe is not part of this test")
+                started.append(cmd)
+                app._closing = True                       # the window is closed while ffmpeg runs: it is killed
+
+            def wait(p):
+                return 1
+        old = vd.subprocess.Popen
+        vd.subprocess.Popen = Killed
+        app._ffmpeg = sys.executable                       # only the length probe really runs; it fails harmlessly
+        try:
+            app._convert_worker(os.path.join(self.dir, "r.ts"), os.path.join(self.dir, "r.mp4"))
+        finally:
+            vd.subprocess.Popen = old
+        self.assertEqual(len(started), 1)
+        self.assertEqual(app.statuses, [])                 # nothing is written to a window that is gone
+
+    def stop_with(self, answer, **state):
+        app = _RoomApp(self.dir)
+        app._waiting_full = False
+        for k, v in state.items():
+            setattr(app, k, v)
+        asked = []
+        old = vd.messagebox.askyesno
+        app.t = lambda key, **kw: key
+        vd.messagebox.askyesno = lambda title, text, **k: asked.append((text, k.get("default"))) or answer
+        try:
+            app._stop_room()
+        finally:
+            vd.messagebox.askyesno = old
+        return app, asked
+
+    def test_stop_during_a_recording_asks_first_and_no_keeps_recording(self):
+        app, asked = self.stop_with(False, _rec_started=True)
+        self.assertEqual(asked, [("room_stop_ask", "no")])
+        self.assertFalse(app._room_stop.is_set())
+
+    def test_stop_during_a_recording_stops_after_yes(self):
+        app, asked = self.stop_with(True, _rec_started=True)
+        self.assertTrue(app._room_stop.is_set())
+
+    def test_each_phase_asks_its_own_question(self):
+        for state, key in ((dict(_saving_sound=True), "room_stop_ask_sound"),
+                           (dict(_rec_started=True, _fetching_full=True), "room_stop_ask_full")):
+            app, asked = self.stop_with(False, **state)
+            self.assertEqual(asked, [(key, "no")])
+
+    def test_stop_before_anything_is_recorded_needs_no_question(self):
+        app, asked = self.stop_with(False, _rec_started=False)
+        self.assertEqual(asked, [])
+        self.assertTrue(app._room_stop.is_set())
+
+    def test_a_yes_after_the_recording_already_ended_changes_nothing(self):
+        app = _RoomApp(self.dir)
+        app._waiting_full, app._rec_started, app.t = False, True, lambda key, **kw: key
+        old = vd.messagebox.askyesno
+        vd.messagebox.askyesno = lambda *a, **k: setattr(app, "_room_active", False) or True
+        try:
+            app._stop_room()
+        finally:
+            vd.messagebox.askyesno = old
+        self.assertFalse(app._room_stop.is_set())
+        self.assertEqual(app.statuses, [])
+
+    def test_closing_waits_for_the_killed_conversion_before_removing_its_file(self):
+        order = []
+        tmp = os.path.join(self.dir, "r.mp4.part")
+        open(tmp, "w").close()
+        proc = type("P", (), {"poll": lambda s: None, "kill": lambda s: order.append("kill"),
+                              "wait": lambda s, timeout=None: order.append("wait")})()
+        app = _RoomApp(self.dir)
+        app._room_active = app._done_note = app._room_busy = app._running = app._scanning = False
+        app._conv_proc, app._conv_tmp, app.destroy = proc, tmp, lambda: order.append("destroy")
+        vd.App._close(app)
+        self.assertEqual(order, ["kill", "wait", "destroy"])
+        self.assertFalse(os.path.exists(tmp))
+
+    def test_a_room_link_with_name_and_email_is_never_sent_unencrypted(self):
+        room, q = vd.room_split_link("http://school.example/room/7/a?username=A&email=a@example.org")
+        self.assertEqual(room, "https://school.example/room/7/a/")
+        self.assertEqual(q["username"], "A")
+        self.assertEqual(vd.room_split_link("http://127.0.0.1:8000/room/x")[0], "http://127.0.0.1:8000/room/x/")
 
 
 if __name__ == "__main__":

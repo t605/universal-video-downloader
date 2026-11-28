@@ -153,6 +153,16 @@ class AutoInfo(unittest.TestCase):
             vd.gc_auto_info(AUTO_PAGE.replace("window.accountUserId = 33;", ""))
         self.assertEqual(c.exception.key, "room_err_gc_page")
 
+    def test_a_visitor_who_entered_by_name_only_may_connect(self):
+        page = AUTO_PAGE.replace("accountUserId = 33", "accountUserId = -1")   # no account, no name form left
+        self.assertEqual(vd.gc_auto_info(page)["user"], "-1")
+
+    def test_a_visitor_who_has_not_given_a_name_yet_is_asked_to_enter(self):
+        page = AUTO_PAGE.replace("accountUserId = 33", "accountUserId = -1") + '<input name="UserLite[name]">'
+        with self.assertRaises(vd.RoomError) as c:
+            vd.gc_auto_info(page)
+        self.assertEqual(c.exception.key, "room_err_gc_page")
+
     def test_a_page_without_channel_values(self):
         with self.assertRaises(vd.RoomError) as c:
             vd.gc_auto_info("<script>webinar.subtype = 2;</script>")
@@ -388,6 +398,11 @@ class EnterSite(BaseHTTPRequestHandler):
         if self.path.startswith("/enter-done"):
             self._send(200, "ok", [("Set-Cookie", "gcs=in; Path=/")])
             return
+        if EnterSite.mode.startswith("lite") and not inside and self.path.startswith("/pl/webinar/show"):
+            self._send(200, '<script>window.accountUserId = -1;</script><div class="webinar-login"><form id="w0" '
+                       'action="/pl/webinar/show?id=7&amp;x=1" method="post"><input type="name" name="UserLite[name]">'
+                       '<button type="submit">in</button></form></div>')
+            return
         if self.path.startswith("/pl/webinar/show?id=8") or (inside and self.path.startswith("/pl/webinar/show")):
             self._send(200, "<script>window.accountUserId = 5;</script>" + PAGE)
         elif self.path.startswith("/pl/webinar/show"):
@@ -401,7 +416,12 @@ class EnterSite(BaseHTTPRequestHandler):
                     '<input type="text" name="formParams[full_name]" value="">'
                     '<input type="text" name="formParams[email]" value="">'
                     '<input type="text" name="formParams[phone]" value=""></form>' % action)
-            self._send(200, "<script>window.accountUserId = -1;</script>" + ("" if EnterSite.mode == "noform" else form))
+            flags = ('window.globalCheckboxEnabled = true; window.pdpCheckboxEnabled = true; '
+                     'window.checkboxMailingEnabled = true; window.globalCheckboxForPaidOnly = false;'
+                     if EnterSite.mode == "signed" else "window.globalCheckboxEnabled = false;")
+            head = ('<script>window.accountUserId = -1; window.requestTime = 1700000000; '
+                    'window.requestSimpleSign = "abc123def"; ' + flags + '</script>')
+            self._send(200, head + ("" if EnterSite.mode == "noform" else form))
         else:
             self._send(404, "gone")
 
@@ -409,10 +429,33 @@ class EnterSite(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length") or 0)
         import urllib.parse as up
         EnterSite.posts.append({k: v[0] for k, v in up.parse_qs(self.rfile.read(n).decode()).items()})
+        EnterSite.post_seen = (self.path, self.headers.get("X-Requested-With"))
+        if EnterSite.mode == "lite":                          # a plain browser form: answer with a redirect and a cookie
+            self._send(302, "", [("Location", self.path), ("Set-Cookie", "gcs=in; Path=/")])
+            return
+        if EnterSite.mode == "lite_stuck":
+            self._send(302, "", [("Location", self.path)])
+            return
         if EnterSite.mode == "error":
             self._send(200, json.dumps({"errorMessage": "Wrong data for anna@example.com"}))
         elif EnterSite.mode == "nocookie":
             self._send(200, json.dumps({"success": True}))
+        elif EnterSite.mode == "signed":                    # like the real service: an unsigned form is not processed
+            sent = EnterSite.posts[-1]
+            if sent.get("requestSimpleSign") == "abc123def" and sent.get("globalConfirmCheckbox") == "on":
+                self._send(200, json.dumps({"success": True, "data": {"formProcessed": True}}), [("Set-Cookie", "gcs=in; Path=/")])
+            else:
+                self._send(200, json.dumps({"success": True, "data": {"formProcessed": False}, "message": ""}))
+        elif EnterSite.mode == "script":                    # the next page is named inside a script of the answer
+            self._send(200, json.dumps({"success": True, "data": {"formProcessed": True, "preParts": [
+                {"javascript": "window.location.href = '/enter-done';"}]}}))
+        elif EnterSite.mode == "unprocessed":
+            self._send(200, json.dumps({"success": True, "data": {"formProcessed": False}, "message": "Try again later"}))
+        elif EnterSite.mode == "said":                      # accepted, a message instead of a login (a registration form)
+            self._send(200, json.dumps({"success": True, "message": "",
+                                        "data": {"defaultMessage": "<h3>Check your mail, Anna: anna@example.com</h3>"}}))
+        elif EnterSite.mode == "refused":
+            self._send(200, json.dumps({"success": False, "message": "Phone in international format", "data": []}))
         elif EnterSite.mode == "redirect":                  # the cookie is set only by the page the answer points to
             self._send(200, json.dumps({"success": True, "data": {"redirectUrl": "/enter-done"}}))
         else:
@@ -455,6 +498,68 @@ class EnterRoom(unittest.TestCase):
         self.assertNotIn(self.MAIL, text); self.assertNotIn(self.NAME, text)    # no personal data in the file
         self.assertTrue(path.startswith(self.tmp))
 
+    def test_the_form_is_signed_and_ticked_like_the_browser_does(self):
+        EnterSite.mode = "signed"
+        self.enter()
+        sent = EnterSite.posts[0]
+        self.assertEqual((sent["requestTime"], sent["requestSimpleSign"]), ("1700000000", "abc123def"))
+        self.assertTrue(sent["fromUrl"].endswith("/enterweb_back?utm_source=x"), sent["fromUrl"])
+        self.assertEqual((sent["globalConfirmCheckbox"], sent["pdpConfirmCheckbox"]), ("on", "on"))
+        self.assertFalse([k for k in sent if "mailing" in k.lower()])          # never signs up for advertising
+
+    def test_a_school_without_consent_boxes_gets_none(self):
+        self.enter()
+        self.assertNotIn("globalConfirmCheckbox", EnterSite.posts[0])
+        self.assertNotIn("pdpConfirmCheckbox", EnterSite.posts[0])
+
+    def test_a_next_page_named_in_a_script_of_the_answer_is_visited(self):
+        EnterSite.mode = "script"
+        path = self.enter()
+        self.assertIn("gcs\tin", open(path, encoding="utf-8").read())
+
+    def test_an_unprocessed_form_is_a_failure_with_the_schools_words(self):
+        EnterSite.mode = "unprocessed"
+        with self.assertRaises(vd.LoginError) as c:
+            self.enter()
+        self.assertEqual((c.exception.args[0], c.exception.info), ("enter_err_fail", "Try again later"))
+
+    def test_a_page_that_asks_only_for_a_name_is_entered_with_the_name_alone(self):
+        EnterSite.mode = "lite"
+        path = vd.school_enter_room(f"{self.base}/pl/webinar/show?id=7", self.NAME, "", timeout=5, allow_http=True)
+        self.assertEqual(EnterSite.posts, [{"UserLite[name]": self.NAME}])          # nothing else leaves the PC
+        self.assertEqual(EnterSite.post_seen, ("/pl/webinar/show?id=7&x=1", None))  # sent like a plain browser form
+        text = open(path, encoding="utf-8").read()
+        self.assertIn("gcs\tin", text)
+        self.assertNotIn(self.NAME, text)
+
+    def test_a_name_form_that_stays_on_the_page_is_a_failure(self):
+        EnterSite.mode = "lite_stuck"
+        with self.assertRaises(vd.LoginError) as c:
+            vd.school_enter_room(f"{self.base}/pl/webinar/show?id=7", self.NAME, "", timeout=5, allow_http=True)
+        self.assertEqual(c.exception.args[0], "enter_err_fail")
+        self.assertNotIn(self.NAME, c.exception.info + c.exception.detail)
+        self.assertFalse(os.listdir(self.tmp))
+
+    def test_a_form_with_an_email_field_asks_for_the_email_before_anything_is_sent(self):
+        with self.assertRaises(vd.LoginError) as c:
+            vd.school_enter_room(f"{self.base}/pl/webinar/show?id=7", self.NAME, "", timeout=5, allow_http=True)
+        self.assertEqual(c.exception.args[0], "enter_err_email")
+        self.assertEqual(EnterSite.posts, [])
+
+    def test_what_was_typed_is_only_ever_sent_encrypted_to_the_same_school(self):
+        ok = vd.safe_school_address
+        self.assertTrue(ok("https://school.example/x", "school.example", False))
+        for bad in ("http://school.example/x", "https://other.example/x", "ftp://school.example/x"):
+            self.assertFalse(ok(bad, "school.example", False), bad)
+        self.assertTrue(ok("http://127.0.0.1:5/x", vd.host_of("http://127.0.0.1:5/y"), True))
+
+    def test_a_redirect_to_another_host_is_not_followed(self):
+        h = vd._SchoolRedirects("school.example", False)
+        req = __import__("urllib.request").request.Request("https://school.example/a")
+        for bad in ("https://other.example/b", "http://school.example/b"):
+            with self.assertRaises(vd.LoginError):
+                h.redirect_request(req, None, 302, "x", {}, bad)
+
     def test_a_phone_is_sent_only_into_a_phone_field(self):
         vd.school_enter_room(f"{self.base}/pl/webinar/show?id=7&view=1", self.NAME, self.MAIL, timeout=5, allow_http=True, phone="+100200300")
         self.assertEqual(EnterSite.posts[0]["formParams[phone]"], "+100200300")
@@ -491,8 +596,26 @@ class EnterRoom(unittest.TestCase):
         EnterSite.mode = "nocookie"
         with self.assertRaises(vd.LoginError) as c:
             self.enter()
-        self.assertEqual(c.exception.args[0], "enter_err_fail")
+        self.assertEqual(c.exception.args[0], "enter_err_registered")           # taken, but it did not log us in
         self.assertFalse(os.listdir(self.tmp))                                   # nothing saved
+
+    def test_the_schools_own_words_are_shown_without_the_users_data(self):
+        EnterSite.mode = "said"
+        with self.assertRaises(vd.LoginError) as c:
+            self.enter()
+        self.assertEqual(c.exception.args[0], "enter_err_registered")
+        self.assertIn("Check your mail", c.exception.info)
+        for secret in (self.MAIL, "Anna", "Testova", "<h3>"):
+            self.assertNotIn(secret, c.exception.info)
+            self.assertNotIn(secret, c.exception.detail)
+        self.assertIn("answer: data,message,success", c.exception.detail)       # for the helper's log
+
+    def test_a_form_the_school_refuses_with_success_false_says_why(self):
+        EnterSite.mode = "refused"
+        with self.assertRaises(vd.LoginError) as c:
+            self.enter()
+        self.assertEqual(c.exception.args[0], "enter_err_fail")
+        self.assertEqual(c.exception.info, "Phone in international format")
 
     def test_page_without_a_form(self):
         EnterSite.mode = "noform"
@@ -516,10 +639,14 @@ class EnterRoom(unittest.TestCase):
 
 
 class Texts(unittest.TestCase):
+    def test_the_consent_names_the_schools_boxes(self):
+        self.assertIn("consent boxes", vd.T["en"]["enter_consent"])
+        self.assertIn("галочки согласия", vd.T["ru"]["enter_consent"])
+
     def test_enter_room_texts_exist_in_both_languages(self):
         for key in ("enter_btn", "enter_title", "enter_help", "enter_site", "enter_name", "enter_email",
                     "enter_consent", "enter_go", "enter_busy", "enter_err_empty", "enter_err_form",
-                    "enter_err_fail", "enter_ok"):
+                    "enter_err_fail", "enter_err_registered", "enter_err_email", "enter_ok"):
             for lang in ("en", "ru"):
                 self.assertIn(key, vd.T[lang], key)
 

@@ -1,5 +1,5 @@
 ===============================================================
-  UNIVERSAL VIDEO DOWNLOADER                       version 9.29
+  UNIVERSAL VIDEO DOWNLOADER                       version 9.31
   Saves videos from the internet to your computer, in 480p
 ===============================================================
 
@@ -538,15 +538,24 @@ Plain facts about your password:
 
 WHAT THE MESSAGES MEAN, AND WHAT TO DO
 --------------------------------------
-You see: "No video was found on this page. If the page asks
-only for a name and e-mail: ... If it is a private lesson with
-a password, press "Log in" on the right. ..."
-  -> Do this: if the page asks only for a name and e-mail, open
-     "Log in to websites" and press "No password, only a name
-     and e-mail?". If it is a private lesson, press "Log in",
-     or follow Option A or B. If you are already logged in and
-     it still fails, this website may not be supported. Ask
-     your helper.
+You see: "No video was found on this page. Usually the page
+shows it only after you log in: ..."
+  -> Do this: press "Log in" on the right (a password, Option A)
+     or add a login file (Option B). Only if the site lets you in
+     with just a name and e-mail, open "Log in to websites" and
+     press "No password, only your name?". If you are
+     already logged in and it still fails, this website may not
+     be supported. Ask your helper.
+
+You see: "The school accepted the form, but the program is
+still not logged in. ..."
+  -> Do this: look in your e-mail (the school may have written
+     to you), then log in with a password (Option A) or add a
+     login file (Option B). Pressing "Enter" again does not help.
+
+You see: "The disk is full. ..."
+  -> Do this: delete files you do not need, or choose another
+     folder with "Change", and try again.
 
 You see: "This video is private - the website needs to know you
 are logged in. Set up "Log in to websites"."
@@ -761,7 +770,8 @@ broadcast while it runs and turn it into an MP4 file for you.
      plugged in and do NOT close the laptop lid. If the
      computer sleeps anyway, the recording stops or has a gap.
   5. When the webinar is over, the program stops by itself and
-     makes the MP4. To finish earlier, press "Stop and save".
+     makes the MP4. To finish earlier, press "Stop and save" and
+     answer "Yes" to the question "Stop the recording now?".
      Wait for a message that begins "Done". The MP4 is in your
      download folder.
 
@@ -787,6 +797,17 @@ broadcast while it runs and turn it into an MP4 file for you.
   * While the program is only waiting for the broadcast to
     begin, "Stop and save" cancels and nothing is saved. During
     and after a broadcast it saves what is already recorded.
+    Once video is being saved, the program asks before it
+    stops, and says what would be lost: while the sound is saved
+    first, or while VK's full recording is fetched, stopping
+    throws that part away. A recording you stop early gets a
+    message that says so.
+  * If the internet breaks while a FINISHED recording is being
+    saved, the message says "No answer from the video server".
+    Keep the window open: the program waits up to 30 minutes and
+    goes on by itself. After 30 minutes it ends the recording
+    and says it is not complete. A running broadcast cannot
+    wait: what was shown during the break is missing.
   * If you close the window during a recording, the program
     asks first. If you close it anyway, or switch the computer
     off, the recording stops and no MP4 is made. The ".ts" file
@@ -823,20 +844,19 @@ broadcast while it runs and turn it into an MP4 file for you.
     space. Record anyway?" Free some space first if you can.
   * Rooms whose video comes from Rutube, VK or Kinescope are
     supported (VK since version 9.27, tried on a real live
-    broadcast; Kinescope since 9.29, tried for a few minutes
-    on a real room that played a recording of 2 h 43 min).
+    broadcast; Kinescope since 9.29, tried on a real room that
+    played a recording of 2 h 43 min).
     A room that plays a recording can be saved whole, from
     its start, even if you press the button late. Such a
     Kinescope recording sends its sound as a separate track:
     the program saves the sound first, then the picture, and
     puts them together (the extra file ends with "(sound).ts"
-    and is removed when the MP4 is checked). Version 9.29 was
-    checked with picture and sound on the first two minutes of
-    a real room. A RUNNING broadcast that sends its sound
+    and is removed when the MP4 is checked). A whole real
+    recording of 2 h 43 min was saved with picture and sound
+    (version 9.29). A RUNNING broadcast that sends its sound
     separately cannot be recorded: the program says so.
     If your link has no name and e-mail in it (the room asks
-    for them in its own form), press the button "The school
-    asks for a name and e-mail?" on this page, type both (and
+    for them in its own form), press the button "The school asks for your name?" on this page, type both (and
     a phone number only if the form asks for it), tick the box
     and press "Enter": they are put into the link and you
     press "Start recording" as usual.
@@ -906,19 +926,35 @@ Some schools have no password: you enter the webinar with a
 button "Enter the room" after a small form (name and e-mail).
 The program does not know you then, and says that the page
 holds no broadcast address. Two ways:
-  A. On the page "Record a webinar room" click "The school
-     asks for a name and e-mail? Enter the room here...".
+  A. On the page "Record a webinar room" click "The school asks for your name? Enter the room here...".
      Fill in the address, your name, the e-mail you
-     registered with (a phone number only if the form asks for
-     it), tick the box and press "Enter". The program sends
+     registered with (leave it empty if the page asks only for
+     a name; a phone number only if the form asks for it), tick
+     the box and press "Enter". The program sends
      the form to that school, as
      your browser does. Then press "Start recording". Your
      name and e-mail are not saved by the program.
-     (This way was tested only with a made-up school.) The
+     The program sends the form the way the school's page does:
+     with the school's request signature, and with the school's
+     consent boxes (offer, personal data) ticked - your own tick
+     in the window means that you agree to them. It never signs
+     you up for advertising mail. If the school accepts the form
+     but you are still not logged in, the program says so.
+     (Tested only with a made-up school. Earlier versions
+     probably failed on a real school because they left out the
+     signature and the boxes; this is not confirmed there yet.)
+     A page that asks only for a name has no consent boxes: the
+     program sends the name alone.
+     If the program says "The school did not let the program
+     in": check the name and the address and try once more. If it
+     says "This page also asks for an e-mail": type it and press
+     "Enter". If it says "This page shows no entry form", or it
+     still fails, use way B.
+
+     The
      same entry for an ordinary page to download, not a
      webinar (the page says "To watch the video, log in"
-     and shows only name and e-mail fields): button "No
-     password, only a name and e-mail? Enter here..." on
+     and shows only name and e-mail fields): button "No password, only your name? Enter here..." on
      the page "Log in to websites". The window takes the
      address from the main screen (check it). After "Enter",
      open "Download video" in the menu and press the blue

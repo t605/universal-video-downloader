@@ -172,6 +172,22 @@ class FreeNames(unittest.TestCase):
             ("view.mp4", "ok"), ("view.mp4.part", "half"), ("view.f137.mp4", "video only"), ("view.f140.m4a", "audio only")))
         self.assertEqual(self.names(), ["view.mp4"])
 
+    def test_a_lesson_whose_name_ends_like_a_piece_is_delivered_not_deleted(self):
+        vd.run_into_free_names(self.opts("Lesson.f2"), self.writer(("Lesson.f2.mp4", "whole"), ("Topic.f1.mp4", "whole")))
+        self.assertEqual(self.names(), ["Lesson.f2.mp4", "Topic.f1.mp4"])
+
+    def test_separate_picture_and_sound_pieces_of_a_failed_download_are_removed(self):
+        with self.assertRaises(RuntimeError):
+            vd.run_into_free_names(self.opts(), self.writer(
+                ("v.f1318.mp4", "picture only"), ("v.faudio_mp4a-Unknown.mp4.part", "half"), ("w.f1318.mp4", "picture only"),
+                ("w.faudio_mp4a-Unknown.mp4", "sound only"), fail=True))
+        self.assertEqual(self.names(), [])
+
+    def test_a_lone_picture_piece_of_a_failed_download_is_never_delivered(self):
+        with self.assertRaises(RuntimeError):
+            vd.run_into_free_names(self.opts(), self.writer(("Lesson.f137.mp4", "picture only"), fail=True))
+        self.assertEqual(self.names(), [])
+
     def test_a_failed_download_still_delivers_the_files_it_finished(self):
         with self.assertRaises(RuntimeError):
             vd.run_into_free_names(self.opts(), self.writer(("one.mp4", "1"), ("two.mp4.part", "half"), fail=True))
@@ -186,7 +202,7 @@ class FreeNames(unittest.TestCase):
         import time
         old = os.path.join(self.dir, ".vdl_deadbeef")             # a download that was closed or crashed, two days ago
         os.makedirs(old)
-        for name in ("Finished lesson.mp4", "view.mp4", "half.mp4.part", "merge.temp.mp4", "piece.mp4.part-Frag3", "x.f137.mp4"):
+        for name in ("Finished lesson.mp4", "view.mp4", "half.mp4.part", "merge.temp.mp4", "piece.mp4.part-Frag3", "x.f137.mp4", "x.f140.m4a.part"):
             with open(os.path.join(old, name), "w") as f:
                 f.write("data of " + name)
         t = time.time() - 2 * 86400

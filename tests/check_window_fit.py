@@ -56,7 +56,7 @@ STATUS_KEYS = [("busy", "st_room_wait_full", dict(h=4, w="3:59:59", r="3:59:59")
                ("warn", "st_room_done_skipped", dict(n=12)), ("warn", "st_room_done_check", dict(t="2:28:34")),
                ("err", "room_err_gc_nostream", {}), ("err", "room_err_enc", {}),
                ("warn", "st_room_done_late_gaps", dict(t="2:28:34")), ("warn", "st_room_done_noaudio", {}),
-               ("err", "room_err_audio", {}), ("err", "room_err_sound", {}), ("busy", "st_room_rec_sound", {}), ("warn", "st_done_part", dict(ok=11, n=13))]
+               ("err", "room_err_audio", {}), ("err", "room_err_sound", {}), ("busy", "st_room_rec_sound", {}), ("warn", "st_done_part", dict(ok=11, n=13)), ("warn", "d_no_player", {}), ("warn", "st_room_net_wait", {}), ("err", "d_disk", {}), ("warn", "st_room_done_cut", dict(t="2:28:34", total="2:43:39")), ("warn", "st_room_done_stopped", dict(t="2:28:34"))]
 for lang in ("ru", "en"):
     if app._lang != lang:
         app._switch_lang()

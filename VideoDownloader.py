@@ -33,13 +33,13 @@
 """
 
 import os, sys, re, ssl, glob, time, json, shutil, argparse, subprocess, threading
-import webbrowser, urllib.request, urllib.parse, urllib.error
-import base64, socket, struct, http.cookiejar, atexit
+import webbrowser, urllib.request, urllib.parse, urllib.error, http.client
+import base64, socket, struct, http.cookiejar, atexit, functools
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 
 APP_NAME = "Universal Video Downloader"
-APP_VER  = "9.29"
+APP_VER  = "9.31"
 
 def _scrub_url(m) -> str:
     """An address without anything that identifies or logs in the user: no name:password@, no ?query, no #fragment,
@@ -910,10 +910,10 @@ def firefox_available() -> bool:
 #  The password is only kept in memory (never logged, never saved to a file).
 # ══════════════════════════════════════════════════════════════
 class LoginError(Exception):
-    """args[0] is a wording key in T (shown to the user); .info is extra text."""
-    def __init__(self, key, info=""):
+    """args[0] is a wording key in T (shown to the user); .info is extra text shown with it; .detail is for the log only."""
+    def __init__(self, key, info="", detail=""):
         super().__init__(key)
-        self.info = info
+        self.info, self.detail = info, detail
 
 def _write_netscape(jar, path):
     rows = ["# Netscape HTTP Cookie File"]
@@ -1045,6 +1045,44 @@ def school_login(page_url, email, password, timeout=30, allow_http=False):
     return path, checked
 
 
+def gc_form_extras(html: str, page_url: str) -> dict:
+    """What the school's page script adds to a form before sending it (read from the page): the request signature - without
+    it the school does not process the form -, the page's address, and the consent boxes the form shows (offer / personal
+    data; the user agrees to them in the program's dialog). The advertising-mail box is never ticked."""
+    def value(name, pattern):
+        m = re.search(r"window\." + name + r"\s*=\s*" + pattern, html)
+        return m.group(1) if m else ""
+
+    def on(name):
+        return value(name, r"(true|!!1|1)\b") != ""
+    out = {"fromUrl": page_url}
+    when, sign = value("requestTime", r"""['"]?(\d+)"""), value("requestSimpleSign", r"""['"]([0-9A-Za-z]+)['"]""")
+    if when and sign:
+        out["requestTime"], out["requestSimpleSign"] = when, sign
+    if on("globalCheckboxEnabled") and not on("globalCheckboxForPaidOnly"):
+        out["globalConfirmCheckbox"] = "on"
+    if on("pdpCheckboxEnabled"):
+        out["pdpConfirmCheckbox"] = "on"
+    return out
+
+
+def safe_school_address(url: str, host: str, allow_http: bool) -> bool:
+    """The same school, and encrypted (plain http only for the offline tests)."""
+    u = url.lower()
+    return host_of(url) == host and (u.startswith("https://") or (allow_http and u.startswith("http://")))
+
+
+class _SchoolRedirects(urllib.request.HTTPRedirectHandler):
+    """During the entry a redirect is followed only to a safe address of the same school."""
+    def __init__(self, host, allow_http):
+        self.host, self.allow_http = host, allow_http
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not safe_school_address(newurl, self.host, self.allow_http):
+            raise LoginError("login_err_site")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def school_enter_room(page_url, name, email, timeout=30, allow_http=False, phone=""):
     """Enter a GetCourse school's webinar room the way its "Enter the room" button does, for a school
     that has NO password (the page shows a small form: name + e-mail). Added 2026-11-17 after a real
@@ -1066,16 +1104,17 @@ def school_enter_room(page_url, name, email, timeout=30, allow_http=False, phone
     jar = http.cookiejar.CookieJar()
     tls = urllib.request.HTTPSHandler(context=ssl.create_default_context())
     cookies = urllib.request.HTTPCookieProcessor(jar)
-    op = urllib.request.build_opener(cookies, tls)
+    op = urllib.request.build_opener(cookies, tls, _SchoolRedirects(host, allow_http))
     op_post = urllib.request.build_opener(cookies, tls, _NoRedirect)    # the form data is never re-sent elsewhere
 
-    def call(url, data=None, ref=""):
+    def call(url, data=None, ref="", ajax=True):
         hdrs = {"User-Agent": UA, "Accept-Language": "ru,en;q=0.8"}
         if data is not None:
-            hdrs.update({"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-                         "X-Requested-With": "XMLHttpRequest", "Referer": ref or page_url,
+            hdrs.update({"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8", "Referer": ref or page_url,
                          "Origin": f"{parts.scheme}://{parts.netloc}",
-                         "Accept": "application/json, text/javascript, */*"})
+                         "Accept": "application/json, text/javascript, */*" if ajax else "text/html,*/*;q=0.8"})
+            if ajax:                                            # a plain browser form must not look like a script's call
+                hdrs["X-Requested-With"] = "XMLHttpRequest"
             data = urllib.parse.urlencode(data).encode("utf-8")
         try:
             with (op if data is None else op_post).open(
@@ -1085,6 +1124,8 @@ def school_enter_room(page_url, name, email, timeout=30, allow_http=False, phone
             if data is not None and 300 <= e.code < 400:      # a redirect after the POST is an answer, not an error
                 return url, ""
             raise LoginError("login_err_other", f"HTTP {e.code}")
+        except LoginError:
+            raise
         except Exception as e:
             raise LoginError("login_err_net", clean(e)[:120])
 
@@ -1094,20 +1135,56 @@ def school_enter_room(page_url, name, email, timeout=30, allow_http=False, phone
 
     def brief(s):                                              # what the site answered, without tags / your data
         s = re.sub(r"<[^>]+>", " ", str(s))
-        for secret in (name, email, phone):
+        for secret in [name, email, phone] + name.split():     # a school may greet by the first name alone
             if secret and len(secret) >= 3:
                 s = s.replace(secret, "***")
         return re.sub(r"\s+", " ", s).strip()[:240]
 
+    def saved():
+        safe = re.sub(r"[^A-Za-z0-9.-]", "_", host)
+        path = os.path.join(LOGIN_DIR, f"{safe}.guest.txt")   # NOT <host>.txt: a saved password login stays
+        _write_netscape(jar, path)
+        return path
+
     final, html = call(page_url)
     if not known(html):
         import html as _h
+        # "Please introduce yourself": a plain form with the name only (GetCourse webinar pages, found 2026-11-27)
+        for fm in re.finditer(r"<form\b([^>]*)>(.*?)</form>", html, re.S):
+            if "UserLite[name]" not in fm.group(2):
+                continue
+            act = re.search(r"""\baction\s*=\s*(["'])(.*?)\1""", fm.group(1))
+            action = urllib.parse.urljoin(final, _h.unescape(act.group(2))) if act else final
+            if not safe_school_address(action, host, allow_http):
+                raise LoginError("login_err_site")             # never post elsewhere or unencrypted
+            data = {}
+            for im in re.finditer(r"<input\b([^>]*)>", fm.group(2)):
+                at = {k.lower(): _h.unescape(v) for k, _, v in re.findall(r'([\w-]+)\s*=\s*(["\'])(.*?)\2', im.group(1), re.S)}
+                field = at.get("name", "")
+                if not field or field == "UserLite[name]":
+                    continue
+                if at.get("type", "").lower() == "hidden":
+                    data[field] = at.get("value", "")
+                elif "email" in field.lower():                 # this form wants an e-mail too
+                    if not email:
+                        raise LoginError("enter_err_email")
+                    data[field] = email
+                elif "phone" in field.lower():
+                    data[field] = phone
+            data["UserLite[name]"] = name
+            call(action, data, ref=final, ajax=False)
+            final, html = call(page_url)
+            inside = known(html) or re.search(r"window\.webinar\w*\s*=", html)
+            if "UserLite[name]" in html or not inside:
+                raise LoginError("enter_err_fail", "", "the name form: " + ("the page still shows it" if "UserLite[name]" in html
+                                 else "the page does not look like the webinar after it"))
+            return saved()
         m = re.search(r'<form\b[^>]*\baction="([^"]*block-public/process[^"]*)"[^>]*>(.*?)</form>', html, re.S)
         if not m:
             raise LoginError("enter_err_form")
         action = urllib.parse.urljoin(final, _h.unescape(m.group(1)))
-        if host_of(action) != host:
-            raise LoginError("login_err_site")                 # never post to another site
+        if not safe_school_address(action, host, allow_http):
+            raise LoginError("login_err_site")                 # never post elsewhere or unencrypted
         data = {}
         for im in re.finditer(r"<input\b([^>]*)>", m.group(2)):
             at = {k.lower(): _h.unescape(v) for k, _, v in re.findall(r'([\w-]+)\s*=\s*(["\'])(.*?)\2', im.group(1), re.S)}
@@ -1125,6 +1202,9 @@ def school_enter_room(page_url, name, email, timeout=30, allow_http=False, phone
             data["formParams[email]"] = email
         if not any("full_name" in k for k in data):
             data["formParams[full_name]"] = name
+        data.update(gc_form_extras(html, final))
+        if not email:                                          # this form asks for an e-mail: nothing is sent without it
+            raise LoginError("enter_err_email")
         _, body = call(action, data, ref=final)
         try:
             ans = json.loads(body) if body.strip() else {}
@@ -1133,6 +1213,13 @@ def school_enter_room(page_url, name, email, timeout=30, allow_http=False, phone
         err = isinstance(ans, dict) and (ans.get("errorMessage") or ans.get("error") or ans.get("errors"))
         if err:
             raise LoginError("enter_err_fail", brief(err if isinstance(err, str) else json.dumps(err, ensure_ascii=False)))
+        # The school's own words. Its page script reads the answer as {success, message, data{defaultMessage, redirectUrl}}.
+        inner = ans.get("data") if isinstance(ans, dict) and isinstance(ans.get("data"), dict) else {}
+        said = brief((ans.get("message") if isinstance(ans, dict) else "") or inner.get("defaultMessage") or "")
+        success = ans.get("success") if isinstance(ans, dict) else None
+        if success is False or inner.get("formProcessed") is False:
+            raise LoginError("enter_err_fail", said, f"the school did not process the form (success: {success}; "
+                             f"data: {','.join(sorted(map(str, inner)))[:80] or '-'}; school said: {said or '-'})")
         # The school's answer may name a page to go to next (redirectUrl): that visit is what makes the entry stick.
         # Followed only on the school's own host, over https.
         def redirects(o, depth=0):
@@ -1146,10 +1233,20 @@ def school_enter_room(page_url, name, email, timeout=30, allow_http=False, phone
             if isinstance(o, list):
                 return [x for v in o for x in redirects(v, depth + 1)]
             return []
+        def in_scripts(o, depth=0):           # a next page named by a script of the answer: location.href = '...'
+            if depth > 5:
+                return []
+            if isinstance(o, dict):
+                found = re.findall(r"""location(?:\.href)?\s*(?:=|\.(?:replace|assign)\()\s*['"]([^'"]+)['"]""",
+                                   str(o.get("javascript") or ""))
+                return found + [x for v in o.values() for x in in_scripts(v, depth + 1)]
+            if isinstance(o, list):
+                return [x for v in o for x in in_scripts(v, depth + 1)]
+            return []
         went = ""
-        for r in redirects(ans)[:2]:
+        for r in (redirects(ans) + in_scripts(ans))[:3]:
             nxt = urllib.parse.urljoin(final, r)
-            if host_of(nxt) == host and nxt.lower().startswith("https://") or (allow_http and host_of(nxt) == host):
+            if safe_school_address(nxt, host, allow_http):
                 try:
                     call(nxt)
                     went = urllib.parse.urlsplit(nxt).path[:60]
@@ -1158,13 +1255,12 @@ def school_enter_room(page_url, name, email, timeout=30, allow_http=False, phone
         final, html = call(page_url)
         if not known(html):
             keys = ",".join(sorted(str(k) for k in ans))[:80] if isinstance(ans, dict) else "no JSON"
-            raise LoginError("enter_err_fail", ("the page still shows the entry form" if "block-public/process" in html
-                                                else "the page does not know the visitor")
-                             + f" (answer: {keys}; went to: {went or 'nothing'})")
-    safe = re.sub(r"[^A-Za-z0-9.-]", "_", host)
-    path = os.path.join(LOGIN_DIR, f"{safe}.guest.txt")   # NOT <host>.txt: a saved password login stays
-    _write_netscape(jar, path)
-    return path
+            detail = (("the page still shows the entry form" if "block-public/process" in html
+                       else "the page does not know the visitor")
+                      + f" (answer: {keys}; success: {success}; went to: {went or 'nothing'}; school said: {said or '-'})")
+            # "success" without being let in: the form was taken as a registration - pressing again cannot help
+            raise LoginError("enter_err_registered" if success is True else "enter_err_fail", said, detail)
+    return saved()
 
 
 # ══════════════════════════════════════════════════════════════
@@ -1189,6 +1285,31 @@ ROOM_WS ="wss://ws3.bizon365.ru"          # the room page uses this host
 ROOM_FIELDS = ("username", "email", "phone", "param1", "param2", "param3", "cu1", "sup")
 
 
+class HttpStatusError(OSError):
+    """The server answered, but not with the file (.status)."""
+    def __init__(self, status):
+        super().__init__(f"HTTP {status}")
+        self.status = status
+
+
+def connection_problem(e) -> bool:
+    """True if trying again later can help: no connection, a broken one, or a server that is busy for the moment.
+    False for a clear refusal (403, 404 ...) and for anything unknown."""
+    if isinstance(e, HttpStatusError):
+        return e.status >= 500 or e.status in (408, 429)
+    return isinstance(e, (urllib.error.URLError, TimeoutError, ConnectionError, socket.timeout, ssl.SSLError,
+                          http.client.HTTPException))
+
+
+class IncompletePiece(ConnectionError):
+    """The server sent fewer bytes than the piece has."""
+
+
+def server_answered(e) -> bool:
+    """A trouble with the server's answer for this piece (not a dead connection): worth only a short wait."""
+    return isinstance(e, (HttpStatusError, IncompletePiece))
+
+
 def _http(url, data=None, headers=None, timeout=30):
     """(status, bytes). HTTP errors come back as a status, not an exception."""
     if not url.lower().startswith(("http://", "https://")):
@@ -1203,7 +1324,11 @@ def _http(url, data=None, headers=None, timeout=30):
             if rng:
                 if r.status != 206:                                  # the whole file would come back for every piece
                     raise OSError("the server ignored the byte range")
-                return 200, r.read()
+                body = r.read()
+                a, _, b = rng.partition("-")
+                if a.isdigit() and b.isdigit() and len(body) < int(b) - int(a) + 1:
+                    raise IncompletePiece("incomplete piece")        # half a piece would silently damage the video
+                return 200, body
             return r.status, r.read()
     except urllib.error.HTTPError as e:
         try:
@@ -1217,7 +1342,10 @@ def room_split_link(link: str):
     p = urllib.parse.urlparse((link or "").strip())
     if p.scheme not in ("http", "https") or not re.search(r"/room/[^/]+", p.path):
         raise RoomError("room_err_link")
-    room = urllib.parse.urlunparse((p.scheme, p.netloc, p.path.rstrip("/") + "/", "", "", ""))
+    scheme, netloc = p.scheme, p.netloc
+    if scheme == "http" and (p.hostname or "") not in ("127.0.0.1", "localhost", "::1"):
+        scheme, netloc = "https", re.sub(r":80$", "", netloc)     # the link carries the visitor's name and e-mail
+    room = urllib.parse.urlunparse((scheme, netloc, p.path.rstrip("/") + "/", "", "", ""))
     return room, dict(urllib.parse.parse_qsl(p.query, keep_blank_values=True))
 
 
@@ -1279,7 +1407,7 @@ def gc_fetch(url: str, origin: str) -> bytes:
     """One request for the school's stream server (it wants the school as Referer). OSError unless HTTP 200."""
     st, body = _http(url, headers={"Referer": origin + "/", "Origin": origin}, timeout=30)
     if st != 200:
-        raise OSError(f"HTTP {st}")
+        raise HttpStatusError(st)
     return body
 
 
@@ -1420,12 +1548,14 @@ def gc_auto_info(page: str) -> dict:
     info = {"wid": one(r"webinar\.id\s*=\s*(\d+)"), "sign": one(r"webinar\.sign\s*=\s*'([^']+)'"),
             "visitor": one(r"webinar\.visitorId\s*=\s*'([^']*)'"), "launch": one(r"webinar\.launchId\s*=\s*(\d+)"),
             "account": one(r"window\.accountId\s*=\s*(\d+)"), "session": one(r"window\.gcSessionId\s*=\s*(\d+)"),
-            "user": one(r"window\.accountUserId\s*=\s*(\d+)"),
+            "user": one(r"window\.accountUserId\s*=\s*(-?\d+)"),
             "hosts": [h for h in hosts if isinstance(h, str) and re.fullmatch(r"[A-Za-z0-9.-]+", h)],
             "path": one(r'webinarWebsocketPath\s*=\s*"([^"]+)"').replace("\\/", "/")}
     if not (info["wid"] and info["sign"] and info["launch"] and info["account"] and info["hosts"] and info["path"]):
         raise RoomError("room_err_gc_nostream")
-    if not info["user"]:                                    # not logged in: the channel would refuse us
+    # -1 = no account. With the name form gone, the school has let this visitor in by name alone.
+    by_name = info["user"] == "-1" and "UserLite[name]" not in page
+    if not info["user"] or (info["user"].startswith("-") and not by_name):   # not logged in: the channel would refuse us
         raise RoomError("room_err_gc_page")
     return info
 
@@ -2027,10 +2157,26 @@ def sound_beside(ts: str) -> str:
 
 
 # leftovers of an unfinished download: partial files and the unmerged video/audio pieces yt-dlp names "name.f137.mp4"
-_UNFINISHED = re.compile(r"\.(part|ytdl|temp|tmp)$|\.part-Frag\d+$|\.temp\.[A-Za-z0-9]+$|\.f\d+(-[\w.]+)?\.[A-Za-z0-9]+$", re.I)
+_UNFINISHED = re.compile(r"\.(part|ytdl|temp|tmp)$|\.part-Frag\d+$|\.temp\.[A-Za-z0-9]+$", re.I)
+_PIECE = re.compile(r"^(.+)\.f((?:\d+|audio|video|hls|dash)[\w.-]*)\.[A-Za-z0-9]+$", re.I)
+_SURE_PIECE = re.compile(r"\d{3}|audio|video|hls|dash", re.I)      # no lesson is called that
 
 
-def _deliver(folder: str, dest: str):
+def _is_piece(name: str, names: list, complete: bool) -> bool:
+    """An unmerged picture / sound piece "title.f137.mp4" that must not be handed to the user.
+    After a download that SUCCEEDED it is junk only when the merged "title.mp4" lies beside it - a lesson may simply be
+    called "Lesson.f2". After a FAILED one (or in a leftover folder) every typical piece goes, also when it is alone:
+    delivered, it would be a video without sound."""
+    m = _PIECE.match(name)
+    if not m:
+        return False
+    stem = m.group(1)
+    if complete:
+        return any(os.path.splitext(o)[0] == stem for o in names if o != name)
+    return bool(_SURE_PIECE.match(m.group(2))) or any(o != name and o.startswith(stem + ".") for o in names)
+
+
+def _deliver(folder: str, dest: str, complete: bool = False):
     """Move every finished file of a hidden download folder into `dest` under a free name, delete the unfinished pieces,
     then remove the folder if it is empty. A file that cannot be moved stays where it is - it is never deleted."""
     try:
@@ -2043,7 +2189,7 @@ def _deliver(folder: str, dest: str):
         stem, ext = os.path.splitext(f)
         half_mp3 = ext.lower() == ".mp3" and stem in sources    # the source is removed only after a whole MP3
         try:
-            if _UNFINISHED.search(f) or half_mp3:
+            if _UNFINISHED.search(f) or half_mp3 or _is_piece(f, names, complete):
                 os.remove(src)
             else:
                 stem, ext = os.path.splitext(f)
@@ -2081,10 +2227,13 @@ def run_into_free_names(o: dict, run):
         pass
     o2 = dict(o)
     o2["outtmpl"] = os.path.join(tmp, base)
+    ok = False
     try:
-        return run(o2)
+        result = run(o2)
+        ok = True
+        return result
     finally:
-        _deliver(tmp, dest)
+        _deliver(tmp, dest, complete=ok)
 
 
 def fmt_hms(sec: float) -> str:
@@ -2107,8 +2256,16 @@ class RoomRecorder:
 
     def __init__(self, playlist, out_path, stop, log=None, progress=None, fetch=None,
                  workers=8, poll=4.0, idle_end=180.0, retries=5, sleep=None,
-                 refresh=None, refresh_every=0.0, refresh_stale=45.0, refresh_timeout=25.0):
+                 refresh=None, refresh_every=0.0, refresh_stale=45.0, refresh_timeout=25.0,
+                 outage_wait=1800.0, waiting=None, server_wait=90.0, server_budget=300.0):
         self.playlist, self.out, self.stop = playlist, out_path, stop
+        # A FINISHED recording keeps all its pieces on the server: a lost connection is waited out (up to `outage_wait`
+        # seconds) instead of leaving holes. waiting(True / False) tells the screen. A running broadcast never waits.
+        self.outage_wait, self.waiting = outage_wait, waiting or (lambda on: None)
+        # A server that answers but keeps failing for one piece gets `server_wait`, all such waits together `server_budget`.
+        self.server_wait, self._server_left = server_wait, server_budget
+        self._errors = {}                      # address -> why its last request failed
+        self._gave_up = False                  # a wait ran out: do not wait again for every following piece
         self.log = log or (lambda m: None)
         self.progress = progress or (lambda n, secs, failed: None)
         self.fetch = fetch or (lambda u: self._net(u))
@@ -2179,7 +2336,7 @@ class RoomRecorder:
     def _net(url):
         st, body = _http(url, timeout=30)
         if st != 200:
-            raise OSError(f"HTTP {st}")
+            raise HttpStatusError(st)
         return body
 
     def _segment(self, url):
@@ -2188,14 +2345,63 @@ class RoomRecorder:
                 return None
             try:
                 return self.fetch(url)
-            except Exception:
+            except Exception as e:
+                self._errors[url] = e
                 if attempt + 1 < self.retries:
                     self.sleep(min(2 ** attempt, 8))
         return None
 
+    def _wait_out(self, url):
+        """A piece of a finished recording that could not be fetched: keep asking for it. A dead connection is waited out
+        up to `outage_wait` (then the recording is ended: `_gave_up`); a server that fails on this piece only briefly.
+        Returns its bytes, or None (a clear refusal, Stop, or the longest wait is over)."""
+        error = self._errors.get(url)
+        if self._gave_up or not connection_problem(error):
+            return None
+        start, pause, told = time.time(), 5.0, False
+        answering = start if server_answered(error) else None      # since when the server has been answering badly
+        try:
+            while not self.stop.is_set():
+                try:
+                    data = self.fetch(url)
+                except Exception as e:
+                    if not connection_problem(e):
+                        return None
+                    error = e
+                    if not server_answered(e):
+                        answering = None
+                    elif answering is None:
+                        answering = time.time()
+                else:
+                    if told:
+                        self.log("   The connection is back")
+                    return data
+                short = server_answered(error)
+                limit = min(self.server_wait, self._server_left) if short else self.outage_wait
+                if time.time() - (answering if short and answering else start) >= limit:
+                    if short:
+                        self.log("   The server keeps failing on this piece: going on without it")
+                    else:
+                        self._gave_up = True
+                        self.log("   Still no connection: ending the recording here")
+                    return None
+                if not told:
+                    told = True
+                    self.log("   No answer from the video server (connection lost?): waiting and trying again")
+                    self.waiting(True)
+                self.sleep(min(pause, max(0.5, limit)))
+                pause = min(pause * 2, 30.0)
+            return None
+        finally:
+            if answering is not None:
+                self._server_left = max(0.0, self._server_left - (time.time() - answering))
+            if told:
+                self.waiting(False)
+
     def run(self) -> dict:
         """Returns {'segments','seconds','failed','reason'}; reason is one of
-        'endlist', 'ended' (refresh() reported StreamOver), 'stopped', 'stalled', 'disk' (the file could not be written: disk full,
+        'endlist', 'ended' (refresh() reported StreamOver), 'stopped', 'stalled', 'lost' (a finished recording: the connection
+        did not come back), 'disk' (the file could not be written: disk full,
         folder gone)."""
         r = {"segments": 0, "seconds": 0.0, "failed": 0, "skipped": 0, "reason": "stalled"}
         try:
@@ -2255,8 +2461,12 @@ class RoomRecorder:
                                 nxt = segs[0][0]
                     if nxt is None and segs:
                         nxt = segs[0][0]
-                        if pl["init"]:
+                        if pl["init"]:                          # without this first part the video cannot be read
                             data = self._segment(pl["init"])
+                            if data is None and pl["endlist"]:
+                                data = self._wait_out(pl["init"])
+                            if data is None and not self.stop.is_set():
+                                raise RoomError("room_err_stream")
                             if data: f.write(data)
                     if nxt is not None:
                         fresh = [s for s in segs if s[0] >= nxt]
@@ -2268,6 +2478,8 @@ class RoomRecorder:
                             for sg in fresh:
                                 self._seen.append(urllib.parse.urlparse(sg[1]).path)
                     endlist = pl["endlist"]
+                    if endlist:
+                        r["total"] = sum(sg[2] for sg in pl["segments"])
                 except RoomError:
                     raise
                 except Exception as e:
@@ -2281,18 +2493,26 @@ class RoomRecorder:
                     futs = [pool.submit(self._segment, s[1]) for s in batch]
                     for s, fu in zip(batch, futs):          # written strictly in order
                         data = fu.result()
+                        if data is None and endlist:
+                            data = self._wait_out(s[1])
                         if data is None and self.stop.is_set():
-                            continue                                # cut short by Stop: not a real failure
+                            break                # cut short by Stop: not a failure, and nothing is written after the gap
                         if data is None:
                             failed += 1; r["failed"] = failed
                             self.log(f"   Segment {s[0]} could not be downloaded - skipped")
+                            if self._gave_up:                       # the connection is gone: no hour of useless tries
+                                todo.clear()
+                                break
                         else:
+                            self._gave_up = False
                             f.write(data); done += 1; secs += s[2]
                             r["segments"], r["seconds"] = done, secs   # survives a later write error
                     self.progress(done, secs, failed)
                     last_ok = time.time()
                 if self.stop.is_set():
                     reason = "stopped"; break
+                if self._gave_up:
+                    reason = "lost"; break
                 if endlist and not todo:
                     reason = "endlist"; break
                 if self.over and not todo:         # the last pieces of the finished broadcast are in
@@ -2377,25 +2597,27 @@ T = {
                    "stops and no MP4 is made (VK's full recording is not fetched either). The unprocessed copy (.ts) stays in "
                    "your download folder; “Convert to MP4” can turn it into a video later. Close anyway?",
     room_err_link="This link does not look like a webinar. The address must contain /room/ (a webinar room) or /pl/webinar/show (a school's own webinar page). Copy the address of the page where the webinar is shown.",
-    room_err_gc_page="The webinar page could not be opened. Log in to the school first (“Log in to websites”), then try again. If the school has no password, press the button “The school asks for a name and e-mail?” on this page.",
-    room_err_gc_nostream="No broadcast address: the school has probably not let the program in. If the page asks for a name and e-mail, press “The school asks for a name and e-mail?”, then “Start recording”. With a password: “Log in to websites”.",
+    room_err_gc_page="The webinar page could not be opened. Log in to the school first (“Log in to websites”), then try again. If the school has no password, press the button “The school asks for your name?” on this page.",
+    room_err_gc_nostream="No broadcast address: the school has probably not let the program in. If the page asks for a name and e-mail, press “The school asks for your name?”, then “Start recording”. With a password: “Log in to websites”.",
     room_err_gc_socket="No connection to the school's webinar channel, so NOTHING is being recorded. Check the internet and press “Start recording” again. If the webinar time has not passed yet, keep trying and call your helper. (After a webinar has ended, the school no longer shows its video.)",
     room_err_gc_info="The school did not give the video list for this webinar. Wait a minute and try again. If it keeps failing, tell the person who helps you.",
-    enter_btn="The school asks for a name and e-mail?  Enter the room here...",
-    enter_btn_site="No password, only a name and e-mail?  Enter here...",
-    enter_title="Enter with a name and e-mail",
-    enter_help="Use this only if a page of the school asks for a name and an e-mail (no password). The program fills in that form for you, as your browser does. What you type is sent only to this school; the program does not keep your name or e-mail.",
+    enter_btn="The school asks for your name?  Enter the room here...",
+    enter_btn_site="No password, only your name?  Enter here...",
+    enter_title="Enter with your name",
+    enter_help="For a page that asks for your name (some also ask for an e-mail) and no password. It is sent only to this school; the program does not keep it.",
     enter_site="Web address of the page (the one you paste):",
     enter_name="Your name (as in the school's form):",
     enter_phone="Your phone (only if the form asks for it; otherwise leave empty):",
-    enter_email="Your e-mail (the one you registered with):",
-    enter_consent="I agree: the program sends my name, e-mail and phone (if typed) to the school, as the school's own form does.",
+    enter_email="Your e-mail (leave empty if the page asks only for a name):",
+    enter_err_email="This page also asks for an e-mail. Type the one you registered with and press “Enter” again.",
+    enter_consent="I agree: send my name, e-mail and phone (what I typed) to this school and tick its consent boxes (terms, personal data) for me.",
     enter_go="Enter",
     enter_busy="Entering - this can take up to about a minute. Please wait...",
-    enter_err_empty="Fill in the web address (it starts with https://), your name and your e-mail, and tick the box.",
+    enter_err_empty="Fill in the web address (it starts with https://) and your name (and a correct e-mail, if you type one), and tick the box.",
     enter_room_in_link="Your details are now in the room link. Press “Start recording”.",
     enter_err_form="This page shows no entry form. If you are already inside in your browser, use a login file instead (“Log in to websites”: add-on, log in, “Export”).",
-    enter_err_fail="The school did not let the program in.",
+    enter_err_fail="The school did not let the program in. Check the name and the address and try once more. If it fails again, add a login file or ask your helper.",
+    enter_err_registered="The school accepted the form, but you are not logged in. It may have sent you an e-mail. Press “Cancel”, open “Log in to websites”: password or login file.",
     enter_ok="Entered {host}. Next: for a video open “Download video”; for a webinar open “Record a webinar” and press “Start recording”.",
     room_err_signin="The room did not let the program in. Open the link in your browser to "
                     "check that it still works. If it does not, ask the school for a new link.",
@@ -2414,6 +2636,13 @@ T = {
     room_err_audio="This broadcast sends the sound separately from the picture, and the program cannot record such a running broadcast. If the school publishes the recording later, press “Start recording” again then, or ask your helper.",
     room_err_sound="The sound of this webinar could not be downloaded completely, so the video was not saved. Check the internet and press “Start recording” again.",
     st_room_rec_sound="Saving the sound of the recorded webinar first, then the picture. Please do not close this window.",
+    room_stop_ask="Stop the recording now? What is saved so far stays; the rest of the webinar will be missing.",
+    room_stop_ask_sound="Stop now? The video is not saved yet: what was downloaded will be thrown away, and you would have to start again. Stop anyway?",
+    room_stop_ask_full="Stop now? The part of the full recording downloaded so far will be thrown away; only your own, earlier recording stays. Stop anyway?",
+    st_room_done_cut="Done, but not complete: saving stopped before the end ({t} of {total}). To get the whole video, press “Start recording” again. The MP4 and a copy (.ts) are in your download folder.",
+    st_room_done_stopped="Done. You stopped the recording, so what came after is not in the video. The MP4 ({t}) is in your download folder.",
+    d_disk="The disk is full. Free some space, or choose a folder on another disk (page “Download video”, button “Change”), and try again.",
+    st_room_net_wait="No answer from the video server (is the internet connection lost?). The program waits up to 30 minutes and goes on by itself. Keep this window open.",
     st_room_done_noaudio="Done, but WITHOUT SOUND, so this recording is not good. The .ts file in the download folder was kept. Please show this message to your helper.",
     st_room_done_late_gaps="Done, but not complete: the beginning is missing (the broadcast was already on air), and the rest may have gaps or end early. The recording ({t}) is in your download folder; the unprocessed copy (.ts) was kept too.",
     st_done_part="Not all videos were saved: {ok} of {n}. Try again, or ask your helper (page “Details for helper”).",
@@ -2454,7 +2683,7 @@ T = {
     d_private="This video is private — the website needs to know you are logged in. "
               "Set up “Log in to websites”.",
     d_not_video="This address is not a video page, or this website is not supported.",
-    d_no_player="No video was found on this page. If the page asks only for a name and e-mail: open “Log in to websites” and press “No password, only a name and e-mail?”. If it is a private lesson with a password, press “Log in” on the right. Otherwise this website may not be supported.",
+    d_no_player="No video was found on this page. Usually it appears only after you log in: open “Log in to websites”. A page that asks only for your name has its own button there. Otherwise the site may not be supported.",
     d_drm="This video is copy-protected (DRM), like films on Netflix. Your login is fine — this program cannot save it and does not try to get around the protection. Watch it on the website or in its app.",
     d_network="No internet connection, or the website is not answering. "
               "Try again in a minute.",
@@ -2612,25 +2841,27 @@ T = {
                    "не будет создан (полная запись от VK тоже не скачается). Исходная копия (.ts) останется в папке загрузок; позже её можно "
                    "превратить в видео кнопкой «Сделать MP4». Всё равно закрыть?",
     room_err_link="Эта ссылка не похожа на вебинар. В адресе должно быть /room/ (вебинарная комната) или /pl/webinar/show (страница вебинара школы). Скопируйте адрес страницы, где показывают вебинар.",
-    room_err_gc_page="Страницу вебинара не удалось открыть. Сначала войдите на сайт школы («Вход на сайты») и повторите. Если у школы нет пароля, нажмите на этой странице кнопку «Школа просит имя и электронную почту?».",
-    room_err_gc_nostream="Нет адреса трансляции: школа, вероятно, не впустила программу. Если страница просит имя и почту, нажмите «Школа просит имя и электронную почту?», потом «Начать запись». Есть пароль — «Вход на сайты».",
+    room_err_gc_page="Страницу вебинара не удалось открыть. Сначала войдите на сайт школы («Вход на сайты») и повторите. Если у школы нет пароля, нажмите на этой странице кнопку «Школа просит ваше имя?».",
+    room_err_gc_nostream="Нет адреса трансляции: школа, вероятно, не впустила программу. Если страница просит имя и почту, нажмите «Школа просит ваше имя?», потом «Начать запись». Есть пароль — «Вход на сайты».",
     room_err_gc_socket="Нет связи с каналом вебинара школы, поэтому запись НЕ идёт. Проверьте интернет и снова нажмите «Начать запись». Если время вебинара ещё не прошло, повторяйте и позовите помощника. (После конца вебинара школа его видео уже не показывает.)",
     room_err_gc_info="Школа не выдала список видео этого вебинара. Подождите минуту и попробуйте ещё раз. Если не получится, сообщите тому, кто вам помогает.",
-    enter_btn="Школа просит имя и электронную почту?  Войти в комнату здесь...",
-    enter_btn_site="Нет пароля, только имя и почта?  Войти здесь...",
-    enter_title="Вход по имени и почте",
-    enter_help="Нужно, только если страница школы просит имя и электронную почту (без пароля). Программа заполнит эту форму за вас, как это делает браузер. Введённое отправляется только этой школе; имя и почту программа не хранит.",
+    enter_btn="Школа просит ваше имя?  Войти в комнату здесь...",
+    enter_btn_site="Нет пароля, только имя?  Войти здесь...",
+    enter_title="Вход по имени",
+    enter_help="Для страницы, которая просит имя (иногда и электронную почту), без пароля. Отправляется только этой школе; программа это не хранит.",
     enter_site="Адрес страницы (тот, который вы вставляете):",
     enter_name="Ваше имя (как в форме школы):",
     enter_phone="Ваш телефон (только если форма его просит; иначе оставьте пустым):",
-    enter_email="Ваша электронная почта (с которой вы регистрировались):",
-    enter_consent="Согласие: программа отправит школе моё имя, почту и телефон (если указан), как это делает форма самой школы.",
+    enter_email="Электронная почта (если страница просит только имя, оставьте пустой):",
+    enter_err_email="Эта страница просит и электронную почту. Напишите ту, с которой вы регистрировались, и снова нажмите «Войти».",
+    enter_consent="Согласие: отправить школе моё имя, почту и телефон (то, что указано) и отметить за меня галочки согласия (условия школы, личные данные).",
     enter_go="Войти",
     enter_busy="Выполняется вход — это может занять до минуты. Подождите...",
-    enter_err_empty="Заполните адрес (он начинается с https://), имя и электронную почту и поставьте галочку.",
+    enter_err_empty="Заполните адрес (он начинается с https://) и имя (и верную почту, если пишете её) и поставьте галочку.",
     enter_room_in_link="Ваши данные вставлены в ссылку комнаты. Нажмите «Начать запись».",
     enter_err_form="На этой странице нет формы входа. Если в браузере вы уже внутри, используйте файл входа («Вход на сайты»: дополнение, вход на сайт, «Export»).",
-    enter_err_fail="Школа не пустила программу.",
+    enter_err_fail="Школа не пустила программу. Проверьте имя и адрес и попробуйте ещё раз. Если снова не выйдет, добавьте файл входа или позовите помощника.",
+    enter_err_registered="Школа приняла форму, но вход не выполнен. Возможно, она прислала письмо. Нажмите «Отмена», откройте «Вход на сайты»: пароль или файл входа.",
     enter_ok="Вход на {host} выполнен. Дальше: для видео откройте «Скачать видео»; для вебинара — «Записать вебинар» и нажмите «Начать запись».",
     room_err_signin="Комната не пустила программу. Откройте ссылку в браузере и проверьте, "
                     "что она ещё работает. Если нет — попросите у школы новую ссылку.",
@@ -2650,6 +2881,13 @@ T = {
     room_err_audio="В этой трансляции звук передаётся отдельно от картинки, и такой прямой эфир программа записать не может. Если школа позже опубликует запись, снова нажмите «Начать запись» или позовите помощника.",
     room_err_sound="Не удалось полностью загрузить звук этого вебинара, поэтому видео не сохранено. Проверьте интернет и снова нажмите «Начать запись».",
     st_room_rec_sound="Сначала сохраняю звук записанного вебинара, потом картинку. Не закрывайте это окно.",
+    room_stop_ask="Остановить запись сейчас? Уже сохранённое останется, остальной части вебинара в видео не будет.",
+    room_stop_ask_sound="Остановить сейчас? Видео ещё не сохранено: скачанное пропадёт, и придётся начать заново. Всё равно остановить?",
+    room_stop_ask_full="Остановить сейчас? Скачанная часть полной записи пропадёт; останется только ваша прежняя запись эфира. Всё равно остановить?",
+    st_room_done_cut="Готово, но запись неполная: сохранение остановилось до конца ({t} из {total}). Чтобы получить всё видео, снова нажмите «Начать запись». MP4 и копия (.ts) в папке загрузок.",
+    st_room_done_stopped="Готово. Вы остановили запись, поэтому того, что было дальше, в видео нет. MP4 ({t}) в папке загрузок.",
+    d_disk="На диске нет места. Освободите место или выберите папку на другом диске (страница «Скачать видео», кнопка «Изменить») и повторите.",
+    st_room_net_wait="Сервер видео не отвечает (пропал интернет?). Программа ждёт до 30 минут и продолжит сама. Не закрывайте это окно.",
     st_room_done_noaudio="Готово, но БЕЗ ЗВУКА, поэтому эта запись неудачная. Файл .ts в папке загрузок оставлен. Покажите это сообщение помощнику.",
     st_room_done_late_gaps="Готово, но запись неполная: нет начала вебинара (эфир уже шёл), а дальше могут быть пропуски или запись оборвалась раньше. Запись ({t}) лежит в папке загрузок; исходная копия (.ts) тоже оставлена.",
     st_done_part="Сохранены не все видео: {ok} из {n}. Попробуйте ещё раз или позовите помощника (раздел «Для помощника»).",
@@ -2693,7 +2931,7 @@ T = {
     d_private="Это закрытое видео — сайту нужно знать, что вы вошли. Настройте "
               "«Вход на сайты».",
     d_not_video="По этому адресу нет видео, или этот сайт не поддерживается.",
-    d_no_player="На этой странице не найдено видео. Если страница просит только имя и почту: откройте «Вход на сайты» и нажмите «Нет пароля, только имя и почта?». Если это закрытый урок с паролем, нажмите кнопку «Войти» справа. Иначе этот сайт может не поддерживаться.",
+    d_no_player="На этой странице не найдено видео. Обычно оно видно только после входа: откройте «Вход на сайты». Просят только имя? Там есть кнопка «Нет пароля, только имя?». Иначе сайт может не поддерживаться.",
     d_drm="Это видео защищено от копирования (DRM), как фильмы на Netflix. С вашим входом всё в порядке — эта программа не может его сохранить и не пытается обойти защиту. Смотрите его на сайте или в приложении сайта.",
     d_network="Нет интернета, или сайт не отвечает. Попробуйте через минуту.",
     d_other="Что-то пошло не так. Помощник увидит подробности в разделе "
@@ -2860,6 +3098,19 @@ class CheckListbox(tk.Frame):
 #  One simple main screen for the user; everything else is a page reached
 #  from the menu on the left. Big text, light colours, one blue button.
 # ══════════════════════════════════════════════════════════════
+def stays_awake(method):
+    """The computer must not go to sleep while this worker thread runs."""
+    @functools.wraps(method)
+    def run(self, *args, **kw):
+        self._keep_awake(True)
+        try:
+            return method(self, *args, **kw)
+        finally:
+            self._keep_awake(False)
+    run.stays_awake = True
+    return run
+
+
 class App(tk.Tk):
 
     def __init__(self):
@@ -2956,11 +3207,13 @@ class App(tk.Tk):
             if not messagebox.askyesno(self.t("dl_close_title"), self.t("dl_close_ask"),
                                        icon="warning", default="no", parent=self):
                 return
+        self._closing = True                                           # a conversion must not start its second pass
         p = getattr(self, "_conv_proc", None)                          # a running MP4 conversion would go on without a window
         if p is not None and p.poll() is None:
             try:
                 p.kill()
-            except OSError:
+                p.wait(timeout=5)                         # Windows holds the file until the process is gone
+            except (OSError, subprocess.TimeoutExpired):
                 pass
             try:
                 os.remove(getattr(self, "_conv_tmp", "") or "")
@@ -3539,6 +3792,8 @@ class App(tk.Tk):
         for w in self.winfo_children():
             w.destroy()
         self._build()
+        if self._status_state[1] == "st_link_ok":       # the button's name inside the hint is a word too
+            self._set_status("idle", "st_link_ok", btn=self._dl_text())
 
     # ══════════════════════════════════════════════════════════
     #  COOKIES
@@ -3770,7 +4025,7 @@ class App(tk.Tk):
         wrap = int(560 * self.winfo_fpixels("1i") / 96)
         v_site, v_name, v_mail, v_ok = tk.StringVar(), tk.StringVar(), tk.StringVar(), tk.BooleanVar(value=False)
         v_phone = tk.StringVar()
-        busy = [False]
+        busy, refused = [False], [False]
         v_site.set(self._entry_link())
 
         def field(var):
@@ -3819,12 +4074,14 @@ class App(tk.Tk):
             except Exception: pass
 
         def go():
-            if busy[0]:
+            if busy[0] or refused[0]:                  # refused: another send would only register the visitor again
                 return
             site, nm, mail = v_site.get().strip(), v_name.get().strip(), v_mail.get().strip()
-            if not (self._is_link(site) and nm and "@" in mail and v_ok.get()):
+            if not (self._is_link(site) and nm and (not mail or "@" in mail) and v_ok.get()):
                 msg.config(text=self.t("enter_err_empty"), fg=C["red"]); return
             if not is_gc_webinar_link(site):
+                if not mail and re.search(r"/room/[^/]+", urllib.parse.urlsplit(site).path):
+                    msg.config(text=self.t("enter_err_email"), fg=C["red"]); return    # a room needs both
                 try:                                              # a webinar-room link (/room/): the entry form is the room's own; put name + e-mail into the link
                     self._room_var.set(room_link_with(site, nm, mail, v_phone.get().strip()))
                     self._log("Name and e-mail were added to the room link (they are not logged)", "info")
@@ -3854,13 +4111,15 @@ class App(tk.Tk):
                     post(lambda: done(path))
 
             def failed(e):
-                self._log(f"Entering the room of {host} failed: {e.args[0]} {e.info}", "warn")
+                self._log(f"Entering the room of {host} failed: {e.args[0]} {e.detail or e.info}", "warn")
                 busy[0] = False
                 if alive():
-                    _recolor(go_btn, C["blue"]); go_btn.config(state=tk.NORMAL)
+                    refused[0] = e.args[0] == "enter_err_registered"
+                    if not refused[0]:                          # a second press would only register once more
+                        _recolor(go_btn, C["blue"]); go_btn.config(state=tk.NORMAL)
                     cancel_btn.config(state=tk.NORMAL)
                     extra = f"\n{self.t('login_site_said')} {e.info}" if e.info and e.args[0] in (
-                        "enter_err_fail", "login_err_other") else ""
+                        "enter_err_fail", "enter_err_registered", "login_err_other") else ""
                     msg.config(text=self.t(e.args[0]) + extra, fg=C["red"])
 
             def done(path):
@@ -3882,6 +4141,7 @@ class App(tk.Tk):
         d.update_idletasks()
         x = self.winfo_rootx() + max(0, (self.winfo_width() - d.winfo_reqwidth()) // 2)
         y = self.winfo_rooty() + max(0, (self.winfo_height() - d.winfo_reqheight()) // 3)
+        y = max(0, min(y, self.winfo_screenheight() - d.winfo_reqheight() - 90))    # the buttons stay on the screen
         d.geometry(f"+{x}+{y}")
         (e_name if v_site.get() else e_site).focus_set()
 
@@ -4074,12 +4334,14 @@ class App(tk.Tk):
             return "d_cert", "warn", "details"
         if "ffmpeg is not installed" in e:
             return "d_ffmpeg", "warn", "ffmpeg"
+        if "no space left" in e or "errno 28" in e:
+            return "d_disk", "err", None
         if "drm protected" in e or "drm-protected" in e or "has drm" in e:
             return "d_drm", "err", None
         if any(k in e for k in ("logged-in", "login", "sign in", "private", "403")):
             return "d_private", "warn", "cookies"
         if "no video players" in e:
-            return "d_no_player", "warn", "login"
+            return "d_no_player", "warn", "cookies"
         if "unsupported url" in e or "unable to extract" in e:
             return "d_not_video", "err", None
         if any(k in e for k in ("timed out", "getaddrinfo", "urlopen error",
@@ -4165,7 +4427,10 @@ class App(tk.Tk):
         elif s[0] == "checking":
             self._url_lbl.config(text=self.t("checking"), fg=C["muted"])
         elif s[0] == "ok":
-            self._url_lbl.config(text=self.t("found", title=s[1]) + s[2], fg=C["green_text"])
+            _, title, host, length, n = s
+            parts = [host, self.t("n_videos", n=n) if n > 1 else length]
+            det = "    ·    ".join(x for x in parts if x)
+            self._url_lbl.config(text=self.t("found", title=title) + (("\n" + det) if det else ""), fg=C["green_text"])
         else:
             self._url_lbl.config(text="⚠  " + self.t(s[1]),
                                  fg=C["orange"] if s[2] == "warn" else C["red"])
@@ -4190,16 +4455,15 @@ class App(tk.Tk):
             # show the page's own name instead
             if n > 1 or re.fullmatch(r"[0-9a-f]{32}", title):
                 title = url.split("?")[0].rstrip("/").rsplit("/", 1)[-1] or title
-            parts = [host_of(url) if n else host_of(i.get("webpage_url") or url),
-                     _dur(i.get("duration", 0)) if n <= 1 else self.t("n_videos", n=n)]
-            det = "    ·    ".join(x for x in parts if x)
-            self.after(0, lambda: self._url_ok(title, ("\n" + det) if det else ""))
+            host = host_of(url) if n else host_of(i.get("webpage_url") or url)
+            length = _dur(i.get("duration", 0)) if n <= 1 else ""
+            self.after(0, lambda: self._url_ok(title, host, length, n))
         except Exception as e:
             self.after(0, lambda err=str(e): self._url_fail(err))
 
-    def _url_ok(self, title, det):
+    def _url_ok(self, title, host, length="", n=1):
         self._url_checking = False
-        self._url_state = ("ok", title, det); self._render_url_info()
+        self._url_state = ("ok", title, host, length, n); self._render_url_info()     # words are chosen when it is drawn
         if not self._running:
             self._set_status("idle", "st_link_ok", btn=self._dl_text())
 
@@ -4292,10 +4556,24 @@ class App(tk.Tk):
         threading.Thread(target=self._room_worker, args=(link, self._room_stop),
                          daemon=True).start()
 
+    def _stop_question(self) -> str:
+        """What pressing Stop would lose right now ('' = nothing worth asking about)."""
+        if getattr(self, "_waiting_full", False):
+            return "room_stop_wait_ask"
+        if getattr(self, "_saving_sound", False):
+            return "room_stop_ask_sound"
+        if getattr(self, "_fetching_full", False):
+            return "room_stop_ask_full"
+        return "room_stop_ask" if getattr(self, "_rec_started", False) else ""
+
     def _stop_room(self):
         if self._room_active and not self._room_stop.is_set():
-            if self._waiting_full and not messagebox.askyesno(
-                    self.t("nav_room"), self.t("room_stop_wait_ask"), icon="warning", default="no", parent=self):
+            ask = self._stop_question()
+            if ask and not messagebox.askyesno(self.t("nav_room"), self.t(ask), icon="warning", default="no", parent=self):
+                return
+            if not self._room_active or self._room_stop.is_set():      # it ended while the question was open
+                return
+            if self._stop_question() != ask:                          # something else would be lost now: ask again
                 return
             self._room_stop.set()
             self._set_status("busy", "st_room_stopping")
@@ -4326,6 +4604,17 @@ class App(tk.Tk):
             self._set_status("busy", "st_room_getting_full" if self._fetching_full
                              else "st_room_rec_late" if self._late_start else "st_room_rec", t=fmt_hms(secs))
 
+    def _room_net_wait(self, on, back=""):
+        """The status line while the recorder waits for a lost connection; `back` = the line to return to."""
+        if not self._room_active or self._room_stop.is_set():
+            return
+        if on:
+            self._set_status("warn", "st_room_net_wait")
+        else:
+            self._room_shown = 0.0
+            if back:
+                self._set_status("busy", back)
+
     def _room_converting(self):
         self._room_active = False
         self._room_buttons(True)
@@ -4334,6 +4623,11 @@ class App(tk.Tk):
     def _room_done_note(self, res, length_ok, real):
         """How the recording ended -> (status kind, wording key, values)."""
         t = fmt_hms(real or res["seconds"])
+        total = getattr(self, "_room_vod_total", 0) or res.get("total", 0)     # a ready recording: its whole length
+        if res["reason"] == "lost" or (res["reason"] == "stopped" and total and res["seconds"] < total - 5):
+            if getattr(self, "_late_start", False):
+                return "warn", "st_room_done_late_gaps", {"t": t}
+            return "warn", "st_room_done_cut", {"t": t, "total": fmt_hms(total or res["seconds"])}
         lost = res["failed"] + (res.get("skipped") or 0)      # pieces that failed + pieces the playlist dropped before we got them
         if getattr(self, "_late_start", False) and (lost or not length_ok or res["reason"] == "stalled"):
             return "warn", "st_room_done_late_gaps", {"t": t}  # the missing beginning is never left out of the message
@@ -4383,7 +4677,8 @@ class App(tk.Tk):
                 except OSError as e:
                     say(f"   Could not remove the separate sound file: {clean(e)[:100]}", "warn")
             self._done_note = (("warn", "st_room_done_late_nofull" if self._wait_nofull else "st_room_done_late", note[2])
-                               if self._late_start else ("ok", "st_room_done", note[2]))
+                               if self._late_start else ("warn", "st_room_done_stopped", note[2])
+                               if getattr(self, "_stopped_by_user", False) else ("ok", "st_room_done", note[2]))
         else:
             say(f"   MP4 length {fmt_hms(b)} vs recording {fmt_hms(a)}: the .ts file was kept", "warn")
             self._done_note = ("warn", "st_room_done_late_gaps" if self._late_start else "st_room_done_check", note[2])
@@ -4440,6 +4735,8 @@ class App(tk.Tk):
         self._waiting_full = False
         self._fetching_full = False
         self._wait_nofull = False
+        self._rec_started = False                           # True once video is being saved: "Stop" then asks first
+        self._saving_sound = False
         first = {}                                          # what VK said about the video when the recording started
         gc_live = None                                      # refresh function of a school's live stream (video service)
         sound_url = sound = ""                              # a recorded video whose sound is a separate playlist / its file
@@ -4535,11 +4832,15 @@ class App(tk.Tk):
             stem = safe_name(title) or "webinar"
             out = unique_path(self._dl_dir, stem, ".ts")
             say("   Recording to: " + os.path.basename(out))
+            self._rec_started = True
             if sound_url:                                       # the small sound track first: whatever happens to the
                 sound = unique_path(self._dl_dir, os.path.splitext(os.path.basename(out))[0] + " (sound)", ".ts")  # picture later
                 say("   The sound is a separate track: it is saved first")
                 self.after(0, lambda: self._set_status("busy", "st_room_rec_sound"))
-                ares = RoomRecorder(sound_url, sound, stop, log=say, fetch=fetch).run()
+                self._saving_sound = True
+                ares = RoomRecorder(sound_url, sound, stop, log=say, fetch=fetch,
+                                    waiting=lambda on: self.after(0, lambda: self._room_net_wait(on, "st_room_rec_sound"))).run()
+                self._saving_sound = False
                 if not (ares["reason"] == "endlist" and ares["segments"] and not ares["failed"]):
                     try: os.remove(sound)
                     except OSError: pass
@@ -4563,6 +4864,7 @@ class App(tk.Tk):
                 renew = dict(refresh=gc_live, refresh_every=20 * 60.0, idle_end=15 * 60.0)
                 self._room_idle_min = 15
             rec = RoomRecorder(url, out, stop, log=say, fetch=fetch,
+                               waiting=lambda on: self.after(0, lambda: self._room_net_wait(on)),
                                progress=lambda n, s, f: self.after(0, lambda: self._room_progress(s)), **renew)
             res = rec.run()
             # A VK broadcast that ended and whose beginning is missing (we came late, or pieces were dropped): VK publishes the
@@ -4570,7 +4872,7 @@ class App(tk.Tk):
             # Any problem in this block must never cost the partial recording: it is logged and the MP4 is made as usual.
             if (not is_gc_webinar_link(link) and (vt or "").lower() == "vk" and res["segments"]
                     and first.get("is_live") is not False
-                    and (res["reason"] in ("endlist", "ended") or (res["reason"] == "stalled" and self._late_start))
+                    and (res["reason"] in ("endlist", "ended", "lost") or (res["reason"] == "stalled" and self._late_start))
                     and (self._late_start or res["failed"] or res.get("skipped"))):
                 try:
                     cookie_vk = lambda r: self._cookie_file_for(vk_page_url(r)) or ""
@@ -4592,6 +4894,7 @@ class App(tk.Tk):
                         self._fetching_full = True
                         self.after(0, lambda: self._room_progress(0))
                         res2 = RoomRecorder(got_full[0], out2, stop, log=say,
+                                            waiting=lambda on: self.after(0, lambda: self._room_net_wait(on)),
                                             progress=lambda n, s_, f: self.after(0, lambda: self._room_progress(s_))).run()
                         self._fetching_full = False
                         if res2["reason"] == "stopped":
@@ -4677,6 +4980,7 @@ class App(tk.Tk):
         else:
             say(f"   WARNING: file length {fmt_hms(real)} differs from the segments' "
                 f"{fmt_hms(expect)}", "warn")
+        self._stopped_by_user = res["reason"] == "stopped"   # said in the final message
         self._done_note = self._room_done_note(res, length_ok, real)
         self._convert_worker(out, mp4, after_ok=lambda m: self._room_clean_ts(out, m, say, sound), sound=sound)
 
@@ -4707,7 +5011,12 @@ class App(tk.Tk):
         sound = sound_beside(src)                 # a webinar whose sound was saved as a second file
         if sound:
             self._log(f"   With its sound file: {os.path.basename(sound)}", "info")
-        threading.Thread(target=self._convert_worker, args=(src, out), kwargs={"sound": sound}, daemon=True).start()
+        threading.Thread(target=self._convert_job, args=(src, out, sound), daemon=True).start()
+
+    @stays_awake
+    def _convert_job(self, src, out, sound):
+        """A conversion the user asked for (the recorder has its own protection from sleep)."""
+        self._convert_worker(src, out, sound=sound)
 
     def _convert_worker(self, src, out, after_ok=None, sound=""):
         """src -> out (.mp4). `sound` = a second file that holds the sound track of the picture in src."""
@@ -4726,6 +5035,8 @@ class App(tk.Tk):
         # 1st try: copy picture and sound untouched (fast, no loss);
         # 2nd try: copy the picture, re-encode only the sound (e.g. Opus -> AAC)
         for audio in (["-c:a", "copy"], ["-c:a", "aac", "-b:a", "160k"]):
+            if getattr(self, "_closing", False):
+                break
             two = ["-i", sound] if sound else []
             cmd = [ff, "-hide_banner", "-nostats", "-loglevel", "error", "-progress", "pipe:1",
                    "-i", src, *two, "-map", "0:v:0?", "-map", "1:a:0" if sound else "0:a:0?", "-c:v", "copy", *audio,
@@ -4764,6 +5075,8 @@ class App(tk.Tk):
             if os.path.exists(tmp): os.remove(tmp)
         except OSError:
             pass
+        if getattr(self, "_closing", False):       # the window is gone: nothing left to say
+            return
         self.after(0, lambda e=err: self._conv_fail(e))
 
     def _conv_progress(self, pct):
@@ -4929,6 +5242,7 @@ class App(tk.Tk):
             raise last_err
         return first
 
+    @stays_awake
     def _dl_worker(self, url):
         self._open_dir = ""
         def make_base(ref):
@@ -5250,6 +5564,7 @@ class App(tk.Tk):
         threading.Thread(target=self._sel_worker,
                          args=(sel, self._dl_dir, self._page_url), daemon=True).start()
 
+    @stays_awake
     def _sel_worker(self, sel, out_dir, referer):
         ok = fail = 0; reasons = []
         self._open_dir = ""

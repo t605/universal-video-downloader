@@ -14,7 +14,8 @@ large high-contrast window, English and Russian.
 - **Webinar rooms and school webinar pages.** Paste the link of a live webinar, press "Start recording" **before** it
   begins, and the program records the broadcast (480p, about 1 GB per hour) and saves it as an MP4: rooms whose video comes
   from Rutube, VK or Kinescope (a recorded Kinescope video is saved whole, picture and sound), and GetCourse school webinar
-  pages (`/pl/webinar/show`, also with the name-and-e-mail entry). A VK room
+  pages (`/pl/webinar/show`, also entry by name, or name and e-mail). A finished recording waits up to 30 minutes for a
+  lost internet connection instead of leaving holes. A VK room
   that is already on air gives only the last half minute; after the end the program waits (up to 4 hours) for VK's own
   full recording and saves that instead.
 - **One video from a link** from Vimeo, VK, Kinescope players and about 1,700 other sites known to the download engine
@@ -41,7 +42,6 @@ The full step-by-step manual, written for beginners, is `README.txt` (English) a
 - Windows only.
 - Webinar platforms other than Bizon365 rooms (Rutube, VK or Kinescope video) and GetCourse webinar pages.
 - Record a running broadcast that sends its sound separately from the picture (the program says so).
-- Enter a webinar page that asks for a name only.
 
 ## Is it all right to download this?
 
@@ -56,9 +56,9 @@ Tested: the offline tests of the program (`python tests\test_room.py` and the ot
 course lessons and a public video on a Windows 11 PC, the course-page scan on one real course, three real live webinars of a
 school (recorded, MP4 decoded without errors), and one real VK broadcast (recorded live; VK's full recording, 2 h 28 min, was
 downloaded after the end with the program's own functions and its length matched), one whole scheduled school webinar
-(2 h, through the window of the source version), a short school live recording, and the first two minutes of a real
-Kinescope room (picture and sound). **Not tested:** a whole Kinescope room in one go, the whole VK sequence
-inside the program window, a clean second PC, Windows 10, screen scaling other than 100 %, other webinar platforms, every one
+(2 h, through the window of the source version), a short school live recording, and a whole recording of a real
+Kinescope room (2 h 43 min, picture and sound, version 9.29). The entry by name only worked on one real school. **Not tested:** recording a broadcast after that entry, entry by name and e-mail succeeding on a
+real school, a real internet break, the whole VK sequence inside the program window, a clean second PC, Windows 10, screen scaling other than 100 %, other webinar platforms, every one
 of the 1,700 sites.
 
 ## Build it yourself

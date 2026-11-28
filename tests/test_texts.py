@@ -154,6 +154,57 @@ class NameAndEmailDialog(unittest.TestCase):
         self.assertIn("телефон", vd.T["ru"]["enter_consent"])
 
 
+class NoSleepWhileWorking(unittest.TestCase):
+    def test_the_computer_is_kept_awake_and_released_even_after_an_error(self):
+        calls = []
+        app = SimpleNamespace(_keep_awake=calls.append)
+
+        @vd.stays_awake
+        def worker(self, fail):
+            calls.append("work")
+            if fail:
+                raise RuntimeError("x")
+        worker(app, False)
+        with self.assertRaises(RuntimeError):
+            worker(app, True)
+        self.assertEqual(calls, [True, "work", False, True, "work", False])
+
+    def test_downloads_and_manual_conversion_use_it(self):
+        for name in ("_dl_worker", "_sel_worker", "_convert_job"):
+            self.assertTrue(getattr(getattr(vd.App, name), "stays_awake", False), name)
+
+
+class DiskAndLanguage(unittest.TestCase):
+    def test_a_full_disk_has_its_own_plain_message(self):
+        err = "ERROR: unable to write data: [Errno 28] No space left on device"
+        self.assertEqual(vd.App._diagnose(None, err), ("d_disk", "err", None))
+        for lang in ("en", "ru"):
+            self.assertIn("d_disk", vd.T[lang])
+
+    def test_after_a_language_switch_the_hint_names_the_button_in_the_new_language(self):
+        said = []
+        app = SimpleNamespace(_running=False, _scanning=False, _lang="en", winfo_children=lambda: [], _build=lambda: None,
+                              _status_state=("idle", "st_link_ok", None, {"btn": "Download video"}))
+        app._dl_text = lambda: vd.T[app._lang]["download"]
+        app._set_status = lambda kind, key, action=None, **kw: said.append((key, kw))
+        old = vd.save_settings
+        vd.save_settings = lambda **k: None
+        try:
+            vd.App._switch_lang(app)
+        finally:
+            vd.save_settings = old
+        self.assertEqual(said, [("st_link_ok", {"btn": vd.T["ru"]["download"]})])
+
+    def test_the_found_video_line_is_in_the_current_language(self):
+        shown = []
+        app = SimpleNamespace(_lang="ru", _url_lbl=SimpleNamespace(config=lambda **k: shown.append(k["text"])))
+        app.t = lambda key, **kw: vd.App.t(app, key, **kw)
+        app._url_state = ("ok", "Lesson", "school.example", "", 5)
+        vd.App._render_url_info(app)
+        self.assertIn(vd.T["ru"]["n_videos"].format(n=5), shown[0])
+        self.assertIn("school.example", shown[0])
+
+
 class TemporaryCookieFiles(unittest.TestCase):
     def test_copies_are_removed_at_exit(self):
         fd, path = tempfile.mkstemp(prefix="vdl_vk_", suffix=".txt"); os.close(fd)
